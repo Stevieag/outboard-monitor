@@ -104,6 +104,17 @@ def from_links(base: str, max_pages: int = 60, depth: int = 2):
     return out
 
 
+def _path_of(url: str) -> str:
+    """The part of a URL worth filtering on - path and query, never the host.
+
+    Matching the whole URL means a dealer whose DOMAIN says "outboard"
+    (outboardandmarine.co.uk, clyde-outboard-services.co.uk) has every page on
+    the site treated as a motor listing, so the filter does nothing at all.
+    """
+    parts = urlparse(url)
+    return (parts.path or "/") + (("?" + parts.query) if parts.query else "")
+
+
 def candidate_urls(base: str, extra_pattern: str = None):
     urls = from_sitemap(base)
     how = "sitemap"
@@ -112,7 +123,7 @@ def candidate_urls(base: str, extra_pattern: str = None):
         how = "link walk"
     want = re.compile(extra_pattern, re.I) if extra_pattern else WANT
     keep = [u for u in urls
-            if want.search(u)
+            if want.search(_path_of(u))
             and not SKIP_URL.search(u)
             and not SKIP_LOCALE.match(urlparse(u).path)]
     return keep, how, len(urls)

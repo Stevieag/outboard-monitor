@@ -109,6 +109,13 @@ for p in ("/","/?under=2000","/?under=2000&per_model=1","/?all=1","/delivery","/
     print("   %s  GET %-30s %s" % ("PASS " if s==200 else "FAIL ", p, s))
     bad += (s!=200)
 s,h=get("/nope"); print("   %s  GET %-30s %s (404 expected)" % ("PASS " if s==404 else "FAIL ", "/nope", s)); bad += (s!=404)
+# the populate button and its status feed, without starting a real crawl
+s,h=get("/")
+ok_btn = "Populate from dealers" in h and "function populate()" in h
+print("   %s  populate button on dashboard" % ("PASS " if ok_btn else "FAIL ")); bad += (not ok_btn)
+s,h=get("/api/status")
+ok_api = '"populate"' in h
+print("   %s  populate progress in /api/status" % ("PASS " if ok_api else "FAIL ")); bad += (not ok_api)
 for path,data in (("/save-settings",{"budget":"1750","min_hp":"5"}),
                   ("/set-delivery",{"dealer":"BoatWorld","kind":"free","miles":"44"}),
                   ("/add",{"label":"Web added Yamaha","url":"https://dulasboats.co.uk/products/yamaha-6hp","brand":"Yamaha","hp":"6","currency":"GBP"})):

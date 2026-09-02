@@ -485,19 +485,32 @@ def cmd_delivery(conn, args):
 # These are national online retailers - they ship UK-wide, so they are useful
 # wherever you are. Your postcode only decides which are worth COLLECTING from,
 # which `delivery --postcode` works out separately.
+# Each entry is (name, site, url_pattern). The pattern is optional and only
+# needed where a site's URLs do not say "outboard" - without one, a general
+# chandlery sitemap offers up water pumps and inflatable boats to inspect.
 SEED_DEALERS = [
-    ("BoatWorld",               "https://boatworld.co.uk"),
-    ("Seamark Nunn",            "https://seamarknunn.com"),
-    ("Marine Chandlery",        "https://www.marinechandlery.com"),
-    ("Outboard & Marine",       "https://www.outboardandmarine.co.uk"),
-    ("Clyde Outboard Services", "https://www.clyde-outboard-services.co.uk"),
-    ("Dulas Boats",             "https://dulasboats.co.uk"),
-    ("Ash Marine",              "https://www.ashmarine.co.uk"),
-    ("Gael Force Marine",       "https://www.gaelforcemarine.co.uk"),
-    ("Cambridge Outboards",     "https://www.cambridgeoutboards.co.uk"),
-    ("Nestaway Boats",          "https://nestawayboats.com"),
-    ("Whitstable Marine",       "https://www.whitstablemarine.co.uk"),
-    ("Bill Higham Marine",      "https://www.billhigham.co.uk"),
+    ("BoatWorld",               "https://boatworld.co.uk", None),
+    ("Seamark Nunn",            "https://seamarknunn.com", None),
+    ("Marine Chandlery",        "https://www.marinechandlery.com", None),
+    # Product pages live under /<maker>-post/<model>/ and never say "outboard".
+    ("Outboard & Marine",       "https://www.outboardandmarine.co.uk", r"(?i)-post/.+"),
+    ("Clyde Outboard Services", "https://www.clyde-outboard-services.co.uk", None),
+    ("Dulas Boats",             "https://dulasboats.co.uk", None),
+    ("Ash Marine",              "https://www.ashmarine.co.uk", None),
+    ("Gael Force Marine",       "https://www.gaelforcemarine.co.uk", None),
+    ("Cambridge Outboards",     "https://www.cambridgeoutboards.co.uk", None),
+    ("Nestaway Boats",          "https://nestawayboats.com", None),
+    ("Whitstable Marine",       "https://www.whitstablemarine.co.uk", None),
+    ("Bill Higham Marine",      "https://www.billhigham.co.uk", None),
+    # Honda's own store: start in the marine section, take only /p/ product
+    # pages naming a BF motor, and skip the Honwave boat-plus-engine packages
+    # whose page price is for the whole rig, not the outboard.
+    ("Honda UK Store",          "https://store.honda.co.uk/c/marine/outboard-engines/",
+     r"(?i)/p/(?!.*honwave).*bf\d"),
+    # An Ecwid storefront whose sitemap lists all 264 products - pumps, tenders
+    # and slats included - so match the maker names to keep to the motors.
+    ("YMOP (Ecwid)",            "https://yamahamercuryoutboardprice.ecwid.com",
+     r"(?i)(yamaha|mercury|mariner|suzuki|tohatsu|honda|parsun|hidea|selva)"),
 ]
 
 
@@ -529,11 +542,15 @@ def _listing_facts(title, url):
 
 
 def _crawl_site(conn, site, dealer, pattern=None, max_pages=120, dry_run=False,
-                quiet=False):
+                quiet=False, on_progress=None):
     """Walk one dealer site, adding every outboard it can price.
 
     Shared by `crawl` (one site named on the command line) and `populate`
     (every seed dealer in turn). Returns (added, skipped, nomatch).
+
+    on_progress, if given, is called as (page, total_pages, added) after each
+    page, so a caller with a progress bar - the dashboard - can show movement
+    within a dealer rather than only when the whole site is finished.
     """
     import crawl
     lo = core.get_float_setting(conn, "min_plausible", 400)
@@ -561,6 +578,8 @@ def _crawl_site(conn, site, dealer, pattern=None, max_pages=120, dry_run=False,
         print("Inspecting %d pages (about %d min at the polite rate)...\n"
               % (len(urls), max(1, len(urls) * 4 // 60)))
     for index, url in enumerate(urls, 1):
+        if on_progress:
+            on_progress(index, len(urls), added)
         if url in existing:
             skipped += 1
             continue
@@ -615,11 +634,11 @@ def cmd_crawl(conn, args):
 def cmd_populate(conn, args):
     """Fill an empty install from the seed dealers, then price what it found."""
     only = {d.strip().lower() for d in (args.only or "").split(",") if d.strip()}
-    seeds = [(n, u) for n, u in SEED_DEALERS
+    seeds = [(n, u, p) for n, u, p in SEED_DEALERS
              if not only or n.lower() in only or urlparse(u).netloc.replace("www.", "") in only]
     if not seeds:
         print("No seed dealer matched --only. Known dealers:")
-        for name, _ in SEED_DEALERS:
+        for name, _site, _pattern in SEED_DEALERS:
             print("   %s" % name)
         return
 
@@ -634,11 +653,11 @@ def cmd_populate(conn, args):
     print("This walks real dealer sites at a polite rate, so it takes a while.\n")
 
     totals = []
-    for number, (name, site) in enumerate(seeds, 1):
+    for number, (name, site, seed_pattern) in enumerate(seeds, 1):
         print("-- [%d/%d] %s  (%s)" % (number, len(seeds), name, site))
         added, skipped, nomatch = _crawl_site(
-            conn, site, name, pattern=args.pattern, max_pages=args.max,
-            dry_run=args.dry_run, quiet=args.quiet)
+            conn, site, name, pattern=args.pattern or seed_pattern,
+            max_pages=args.max, dry_run=args.dry_run, quiet=args.quiet)
         totals.append((name, added, skipped))
         print("   %s %d, already had %d, %d pages with no priced motor\n"
               % ("would add" if args.dry_run else "added", added, skipped, nomatch))

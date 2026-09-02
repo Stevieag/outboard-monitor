@@ -4,6 +4,7 @@ from __future__ import annotations
 import html as html_mod
 import json
 import threading
+import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,10 @@ import monitor
 _check_lock = threading.Lock()
 _check_queue = []          # listing ids awaiting a check; None means "all active"
 _check_state = {"running": False, "done": 0, "total": 0, "message": ""}
+
+_populate_lock = threading.Lock()
+_populate_state = {"running": False, "dealer": "", "done": 0, "total": 0,
+                   "added": 0, "page": 0, "pages": 0, "message": ""}
 
 
 def esc(value) -> str:
@@ -84,23 +89,37 @@ background:var(--bg);padding:1px 5px;border-radius:4px}
 """
 
 JS = """
-function run(url){
+function run(url,label){
   document.querySelectorAll('.btn').forEach(function(b){b.disabled=true});
-  var s=document.getElementById('status'); if(s){s.textContent='Checking prices...';}
+  var s=document.getElementById('status');
+  if(s){s.textContent=label||'Checking prices...';}
   fetch(url,{method:'POST'}).then(function(){poll()});
   return false;
 }
 function poll(){
   fetch('/api/status').then(function(r){return r.json()}).then(function(d){
     var s=document.getElementById('status');
-    if(d.running){ if(s){s.textContent='Checking '+d.done+' of '+d.total+'...';}
+    var p=d.populate||{};
+    if(p.running){
+      if(s){s.textContent='Populating — '+p.done+'/'+p.total+' dealers done, '+
+                          p.added+' added  ['+(p.dealer||'')+']';}
+      setTimeout(poll,1200);
+    } else if(d.running){
+      if(s){s.textContent='Checking '+d.done+' of '+d.total+'...';}
       setTimeout(poll,900);
     } else { location.reload(); }
   }).catch(function(){setTimeout(poll,1500)});
 }
+function populate(){
+  if(!confirm('Fetch listings from every seed dealer?\n\nFourteen dealers, four at '+
+              'a time, at one request every four seconds per site — roughly 15 '+
+              'minutes. It runs in the background, so you can keep using the '+
+              'dashboard, and it is safe to close this tab.')){return false}
+  return run('/api/populate','Populating...');
+}
 window.addEventListener('DOMContentLoaded',function(){
   fetch('/api/status').then(function(r){return r.json()}).then(function(d){
-    if(d.running){poll()}});
+    if(d.running||(d.populate&&d.populate.running)){poll()}});
 });
 """
 
@@ -113,6 +132,7 @@ def page(title: str, body: str) -> bytes:
 <a href="/">Dashboard</a><a href="/alerts">Alerts</a><a href="/delivery">Delivery</a>
 <a href="/settings">Settings</a>
 <span style="flex:1"></span><span id="status" class="muted"></span>
+<button class="btn" onclick="return populate()">Populate from dealers</button>
 <button class="btn" onclick="return run('/api/check')">Check all now</button>
 </header>%s<script>%s</script></body></html>""" % (esc(title), CSS, body, JS)).encode("utf-8")
 
@@ -383,8 +403,18 @@ def dashboard(conn, flash=None, flash_bad=False, under=None, per_model=False,
     tile_html = "".join('<div class="tile"><div class="k">%s</div><div class="v">%s</div></div>'
                         % (esc(k), v) for k, v in tiles)
 
-    table = ('<div class="empty">No listings yet. Paste a dealer product URL below to start '
-             'tracking.</div>' if not rows else
+    # A genuinely empty install gets offered the one-click fill; a database that
+    # merely has everything filtered out should not be told to go and populate.
+    nothing_tracked = not core.listings(conn)
+    empty_html = ('<div class="empty">No listings yet.<br><br>'
+                  '<button class="btn" onclick="return populate()">'
+                  'Populate from known dealers</button><br><br>'
+                  '<span class="muted">Fetches what a dozen UK dealers currently '
+                  'list, so you start with prices instead of an empty table. '
+                  'Takes a few minutes. Or paste a dealer product URL below.</span>'
+                  '</div>' if nothing_tracked else
+                  '<div class="empty">Nothing matches the current filter.</div>')
+    table = (empty_html if not rows else
              '<table><thead><tr><th>Motor</th>'
              '<th class="num">Delivered to %s</th>'
              '<th class="num">List</th><th class="num">Delivery</th>'
@@ -656,10 +686,15 @@ def setup_page(conn) -> bytes:
 collect, your budget and the size of motor you want. That drives both the dashboard and
 the alerts, so it is worth setting first.</p>
 <p><a class="btn" href="/settings">Open settings</a></p>
-<p style="margin-top:22px"><b>2. Add some listings.</b> Paste a dealer's product URL in
-the form on the dashboard, or stock it in bulk from a terminal:</p>
-<pre style="background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto"><code>./monitor.py probe "https://dealer.example/yamaha-f6"
-./monitor.py add "Yamaha F6" "https://dealer.example/yamaha-f6" --brand Yamaha --hp 6
+<p style="margin-top:22px"><b>2. Fill it with what dealers are listing.</b> This
+fetches current prices from a dozen UK dealers that publish them, so you start with
+something to compare instead of an empty table. It walks their sites at a polite rate,
+so give it a few minutes — you can carry on using the dashboard meanwhile.</p>
+<p><button class="btn" onclick="return populate()">Populate from known dealers</button></p>
+<p class="muted" style="font-size:13px">Prefer to pick your own? Paste a dealer's product
+URL into the form on the dashboard, or from a terminal:</p>
+<pre style="background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto"><code>./monitor.py populate --dry-run          # see what it would add
+./monitor.py probe "https://dealer.example/yamaha-f6"
 ./monitor.py crawl "https://dealer.example" --dry-run</code></pre>
 <p><a href="/">Go to the dashboard</a></p>
 </div></div></div>"""
@@ -723,6 +758,86 @@ def _background_check(ids=None):
     threading.Thread(target=work, daemon=True).start()
 
 
+# The scraper throttles per HOST, so crawling different dealers at the same
+# time is no less polite than one at a time - and turns an hour into minutes.
+# Kept modest so a home connection is not saturated.
+POPULATE_WORKERS = 4
+
+
+def _background_populate(max_pages=60):
+    """Walk the seed dealers in parallel threads, so the browser is not hanging.
+
+    Populate fetches real dealer sites at a polite rate and takes minutes, far
+    too long for one request. Progress is reported through /api/status the same
+    way a price sweep is. Each worker gets its own SQLite connection; WAL mode
+    lets them write concurrently.
+    """
+    seeds = list(monitor.SEED_DEALERS)
+    pending = list(seeds)
+    pending_lock = threading.Lock()
+    live = {}          # dealer name -> "page/pages", for the status line
+    live_added = {}    # dealer name -> listings added so far, before it finishes
+    done_added = [0]   # listings from dealers that have finished
+
+    def worker():
+        conn = core.init_db()
+        try:
+            while True:
+                with pending_lock:
+                    if not pending:
+                        return
+                    name, site, pattern = pending.pop(0)
+                live[name] = "0/0"
+                live_added[name] = 0
+
+                def progress(page, pages, added, _name=name):
+                    live[_name] = "%d/%d" % (page, pages)
+                    live_added[_name] = added
+                    # a running total, so the count moves during a dealer and
+                    # not only when one finishes
+                    _populate_state["added"] = done_added[0] + sum(live_added.values())
+
+                try:
+                    added, _skipped, _nomatch = monitor._crawl_site(
+                        conn, site, name, pattern=pattern, max_pages=max_pages,
+                        quiet=True, on_progress=progress)
+                except Exception as exc:   # one bad dealer must not stop the rest
+                    added = 0
+                    _populate_state["message"] = "%s: %s" % (name, exc)
+                live.pop(name, None)
+                live_added.pop(name, None)
+                with pending_lock:
+                    done_added[0] += added
+                    _populate_state["added"] = done_added[0] + sum(live_added.values())
+                    _populate_state["done"] += 1
+                    _populate_state["dealer"] = ", ".join(sorted(live)) or "finishing"
+                    _populate_state["page"] = 0
+                    _populate_state["pages"] = 0
+        finally:
+            conn.close()
+
+    def supervise():
+        threads = [threading.Thread(target=worker, daemon=True)
+                   for _ in range(min(POPULATE_WORKERS, len(seeds)))]
+        for t in threads:
+            t.start()
+        while any(t.is_alive() for t in threads):
+            _populate_state["dealer"] = ", ".join(
+                "%s %s" % (n, p) for n, p in sorted(live.items())) or "starting"
+            time.sleep(1)
+        for t in threads:
+            t.join()
+        _populate_state.update(running=False, dealer="")
+
+    with _populate_lock:
+        if _populate_state["running"]:
+            return False
+        _populate_state.update(running=True, done=0, total=len(seeds), added=0,
+                               page=0, pages=0, dealer="starting", message="")
+    threading.Thread(target=supervise, daemon=True).start()
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "OutboardMonitor/1.0"
 
@@ -773,7 +888,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parts.path == "/delivery":
                 self._send(delivery_page(conn, flash=(query.get("msg") or [None])[0]))
             elif parts.path == "/api/status":
-                self._send(json.dumps(_check_state).encode(), ctype="application/json")
+                state = dict(_check_state)
+                state["populate"] = dict(_populate_state)
+                self._send(json.dumps(state).encode(), ctype="application/json")
             elif parts.path == "/favicon.ico":
                 self._send(b"", status=404)
             else:
@@ -825,6 +942,10 @@ class Handler(BaseHTTPRequestHandler):
                 _background_check([listing_id])
                 self._redirect("/?msg=Added+%s+-+fetching+price..."
                                % label.replace(" ", "+")[:60])
+            elif parts.path == "/api/populate":
+                started = _background_populate()
+                self._send(json.dumps({"started": started}).encode(),
+                           ctype="application/json")
             elif parts.path == "/api/check":
                 ids = [int(i) for i in query.get("id", [])] or None
                 _background_check(ids)
