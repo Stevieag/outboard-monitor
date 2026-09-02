@@ -22,6 +22,9 @@ macOS and Linux.
 git clone https://github.com/YOUR-USERNAME/outboard-monitor.git
 cd outboard-monitor
 
+# tell it what you are shopping for (or do it in the browser later)
+./monitor.py setup
+
 # see what prices a dealer page exposes, and which rule to use
 ./monitor.py probe "https://dealer.example/yamaha-f6"
 
@@ -72,7 +75,8 @@ link walk) and adds any product page it can price:
 | `serve` | Web dashboard. `--lan` to reach it from other devices |
 | `crawl URL` | Walk a dealer's sitemap and add its outboards |
 | `export` | Dump all history to CSV |
-| `settings [key value]` | View or change settings |
+| `setup` | Guided first-time setup, walks every setting |
+| `settings [key value]` | View settings grouped, or change one |
 | `schedule --at HH:MM` | Install/remove the launchd job for automatic checks |
 | `edit ID` / `rm ID` | Change or delete a listing |
 
@@ -119,13 +123,18 @@ delivered price — it is **never** treated as free.
 ## Shopping criteria
 
 The app remembers what you are looking for and applies it to the dashboard *and* the
-alerts, so you are not pinged about motors you would never buy:
+alerts, so you are not pinged about motors you would never buy.
+
+Three ways to set it, all equivalent:
 
 ```bash
-./monitor.py settings budget 2000        # alert when a delivered price falls to this
-./monitor.py settings min_hp 4
-./monitor.py settings shaft S            # S, L, XL, UL - blank for any
+./monitor.py setup                       # guided, walks every setting
+./monitor.py settings                    # show everything, grouped
+./monitor.py settings min_hp 4           # set one
 ```
+
+…or edit them in the browser on the dashboard's **Settings** tab. A fresh install
+shows a short welcome page pointing you there.
 
 ## Cost of ownership
 

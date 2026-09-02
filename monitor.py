@@ -651,13 +651,66 @@ def cmd_serve(conn, args):
     web.serve(args.port, host, open_browser=not args.no_open)
 
 
+def cmd_setup(conn, args):
+    """Walk through the settings once, on a fresh install."""
+    print("Outboard Price Monitor - first-time setup")
+    print("Press Enter to keep the current value, or to leave a setting off.\n")
+    changed = 0
+    for group, key, label, kind, help_text in core.settings_spec_flat():
+        if group != getattr(cmd_setup, "_last_group", None):
+            print("\n-- %s" % group)
+            cmd_setup._last_group = group
+        current = core.get_setting(conn, key, "") or ""
+        hint = ""
+        if kind.startswith("choice:"):
+            hint = " [%s]" % "/".join(c or "blank" for c in kind.split(":", 1)[1].split("|"))
+        if help_text:
+            print("   %s" % help_text)
+        try:
+            answer = input("   %s%s [%s]: " % (label, hint, current or "off")).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nStopped. Nothing further changed.")
+            return
+        if answer == "":
+            continue
+        if kind == "number":
+            cleaned = answer.replace(",", "").replace("£", "").strip()
+            try:
+                float(cleaned)
+            except ValueError:
+                print("   (not a number - skipped)")
+                continue
+            answer = cleaned
+        core.set_setting(conn, key, answer)
+        changed += 1
+    print("\nSaved %d setting(s)." % changed)
+    if not core.listings(conn):
+        print("\nNothing is tracked yet. Add your first listing with:")
+        print("   ./monitor.py probe \"https://dealer.example/some-outboard\"")
+        print("   ./monitor.py add \"Label\" \"https://dealer.example/some-outboard\" --hp 6")
+        print("\nOr open the dashboard and use the form:  ./monitor.py serve")
+
+
 def cmd_settings(conn, args):
     if args.key and args.value is not None:
         core.set_setting(conn, args.key, args.value)
         print("%s = %s" % (args.key, args.value))
         return
-    for key in sorted(core.DEFAULT_SETTINGS):
-        print("%-16s %s" % (key, core.get_setting(conn, key)))
+    last_group = None
+    for group, key, label, _kind, _help in core.settings_spec_flat():
+        if group != last_group:
+            print("\n%s" % group)
+            last_group = group
+        value = core.get_setting(conn, key, "") or ""
+        print("  %-18s %-28s %s" % (key, value or "(off)", label))
+    extra = [k for k in sorted(core.DEFAULT_SETTINGS)
+             if k not in {key for _g, key, _l, _k, _h in core.settings_spec_flat()}]
+    if extra:
+        print("\nOther")
+        for key in extra:
+            print("  %-18s %s" % (key, core.get_setting(conn, key) or "(off)"))
+    if not core.is_configured(conn):
+        print("\nLooks like a fresh install - run:  ./monitor.py setup")
 
 
 def cmd_schedule(conn, args):
@@ -852,6 +905,9 @@ def build_parser():
     settings = subs.add_parser("settings", help="view or change settings")
     settings.add_argument("key", nargs="?"), settings.add_argument("value", nargs="?")
     settings.set_defaults(func=cmd_settings)
+
+    setup = subs.add_parser("setup", help="guided first-time setup")
+    setup.set_defaults(func=cmd_setup)
 
     schedule = subs.add_parser("schedule", help="run checks automatically via launchd")
     schedule.add_argument("--hours", type=float, default=6,

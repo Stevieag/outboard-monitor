@@ -111,6 +111,7 @@ def page(title: str, body: str) -> bytes:
 <title>%s</title><style>%s</style></head><body>
 <header><h1>⚓ Outboard Price Monitor</h1>
 <a href="/">Dashboard</a><a href="/alerts">Alerts</a><a href="/delivery">Delivery</a>
+<a href="/settings">Settings</a>
 <span style="flex:1"></span><span id="status" class="muted"></span>
 <button class="btn" onclick="return run('/api/check')">Check all now</button>
 </header>%s<script>%s</script></body></html>""" % (esc(title), CSS, body, JS)).encode("utf-8")
@@ -602,6 +603,62 @@ whichever is cheaper, delivery or driving.</div></div></div>""" % (
     return page("Delivery", body)
 
 
+def settings_page(conn, flash=None) -> bytes:
+    groups = []
+    for group, items in core.SETTINGS_SPEC:
+        rows = []
+        for key, label, kind, help_text in items:
+            value = core.get_setting(conn, key, "") or ""
+            if kind.startswith("choice:"):
+                choices = kind.split(":", 1)[1].split("|")
+                field = ('<select name="%s">%s</select>'
+                         % (key, "".join('<option value="%s"%s>%s</option>'
+                                         % (esc(c), " selected" if str(value) == c else "",
+                                            esc(c) if c else "any")
+                                         for c in choices)))
+            else:
+                field = ('<input name="%s" value="%s" inputmode="%s">'
+                         % (key, esc(value), "decimal" if kind == "number" else "text"))
+            rows.append('<tr><td style="width:230px"><label for="%s">%s</label><br>'
+                        '<span class="muted" style="font-size:12px">%s</span></td>'
+                        '<td style="width:220px">%s</td>'
+                        '<td class="muted" style="font-size:12px">%s</td></tr>'
+                        % (esc(key), esc(label), esc(key), field, esc(help_text)))
+        groups.append('<div class="card"><h2>%s</h2><table><tbody>%s</tbody></table></div>'
+                      % (esc(group), "".join(rows)))
+    flash_html = '<div class="flash">%s</div>' % esc(flash) if flash else ""
+    body = """<div class="wrap">%s
+<h2 style="margin:0 0 4px;font-size:20px">Settings</h2>
+<div class="muted" style="margin-bottom:18px">Leave anything blank to switch it off.
+These drive both what the dashboard shows and what you get alerted about.</div>
+<form method="post" action="/save-settings">%s
+<div class="card"><div class="actions">
+<button class="btn" type="submit">Save settings</button>
+<a href="/" class="muted" style="margin-left:8px">Back to dashboard</a>
+</div></div></form></div>""" % (flash_html, "".join(groups))
+    return page("Settings", body)
+
+
+def setup_page(conn) -> bytes:
+    """Shown on a fresh install, before anything is tracked."""
+    body = """<div class="wrap">
+<div class="card"><h2>Welcome</h2>
+<div style="padding:16px 18px;line-height:1.6">
+<p style="margin-top:0">Nothing is being tracked yet. Two things to do:</p>
+<p><b>1. Tell it what you are looking for</b> — your town, how far you would drive to
+collect, your budget and the size of motor you want. That drives both the dashboard and
+the alerts, so it is worth setting first.</p>
+<p><a class="btn" href="/settings">Open settings</a></p>
+<p style="margin-top:22px"><b>2. Add some listings.</b> Paste a dealer's product URL in
+the form on the dashboard, or stock it in bulk from a terminal:</p>
+<pre style="background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto"><code>./monitor.py probe "https://dealer.example/yamaha-f6"
+./monitor.py add "Yamaha F6" "https://dealer.example/yamaha-f6" --brand Yamaha --hp 6
+./monitor.py crawl "https://dealer.example" --dry-run</code></pre>
+<p><a href="/">Go to the dashboard</a></p>
+</div></div></div>"""
+    return page("Welcome", body)
+
+
 def alerts_page(conn) -> bytes:
     rows = core.recent_alerts(conn, limit=200)
     if not rows:
@@ -684,7 +741,13 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parts.query)
         conn = core.init_db()
         try:
-            if parts.path == "/":
+            if parts.path == "/" and not core.is_configured(conn):
+                self._send(setup_page(conn))
+            elif parts.path == "/setup":
+                self._send(setup_page(conn))
+            elif parts.path == "/settings":
+                self._send(settings_page(conn, flash=(query.get("msg") or [None])[0]))
+            elif parts.path == "/":
                 cap = None
                 if query.get("under"):
                     try:
@@ -760,6 +823,21 @@ class Handler(BaseHTTPRequestHandler):
                 _background_check(ids)
                 self._send(json.dumps({"started": True}).encode(),
                            ctype="application/json")
+            elif parts.path == "/save-settings":
+                saved = 0
+                for _group, key, _label, kind, _help in core.settings_spec_flat():
+                    if key not in form:
+                        continue
+                    raw = (form.get(key) or [""])[0].strip()
+                    if kind == "number" and raw:
+                        raw = raw.replace(",", "").replace("£", "").strip()
+                        try:
+                            float(raw)
+                        except ValueError:
+                            continue          # ignore junk rather than storing it
+                    core.set_setting(conn, key, raw)
+                    saved += 1
+                self._redirect("/settings?msg=Saved+%d+settings" % saved)
             elif parts.path == "/set-delivery":
                 dealer = field("dealer")
                 kind = field("kind", "quote")

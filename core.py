@@ -97,6 +97,67 @@ DEFAULT_SETTINGS = {
 }
 
 
+# Describes every setting so the CLI, the dashboard and the setup flow all agree
+# on what it means, what type it is, and where it belongs.
+SETTINGS_SPEC = [
+    ("What you are shopping for", [
+        ("budget", "Budget", "number",
+         "Alert when a matching motor's DELIVERED price falls to or below this."),
+        ("min_hp", "Minimum HP", "number", "Ignore anything smaller. Blank for no limit."),
+        ("max_hp", "Maximum HP", "number", "Ignore anything larger. Blank for no limit."),
+        ("shaft", "Shaft length", "choice:|S|L|XL|UL",
+         "S short, L long, XL extra-long, UL ultra-long. Blank accepts any. "
+         "Listings that do not state a shaft are always kept."),
+    ]),
+    ("Where you are", [
+        ("delivery_city", "Your town or city", "text",
+         "Used in column headings, e.g. 'Delivered to Manchester'."),
+        ("postcode", "Your postcode", "text",
+         "Used when asking a dealer's own cart what delivery costs."),
+    ]),
+    ("Collecting in person", [
+        ("max_travel_miles", "Furthest you will drive", "number",
+         "One-way miles. Dealers further away are treated as delivery-only."),
+        ("travel_per_mile", "Running cost per mile", "number",
+         "Applied to the ROUND trip, so 0.25 on a 40 mile dealer costs £20."),
+        ("free_collect", "Dealers you would collect from anyway", "text",
+         "Comma-separated. These cost nothing to collect from - no detour."),
+    ]),
+    ("Cost of ownership", [
+        ("service_year1", "Dealer service, first year", "number",
+         "Many warranties require dealer servicing for the whole term."),
+        ("service_year_n", "Dealer service, each later year", "number", ""),
+        ("own_years", "How long you will keep it", "number",
+         "Servicing is only counted for as long as you own it and have cover."),
+    ]),
+    ("Alerts", [
+        ("drop_alert_pct", "Notify on drops of at least", "number", "Percent."),
+        ("notify_macos", "Desktop notifications", "choice:1|0", "1 on, 0 off."),
+    ]),
+    ("Scraping", [
+        ("min_plausible", "Ignore prices below", "number",
+         "Keeps accessories and finance-per-month figures out."),
+        ("max_plausible", "Ignore prices above", "number",
+         "Keeps phone numbers and part codes out."),
+        ("respect_robots", "Honour robots.txt", "choice:1|0",
+         "Leave on unless you have a reason not to."),
+    ]),
+]
+
+
+def settings_spec_flat():
+    for group, items in SETTINGS_SPEC:
+        for key, label, kind, help_text in items:
+            yield group, key, label, kind, help_text
+
+
+def is_configured(conn) -> bool:
+    """Has anyone set this up yet, or is it a fresh clone?"""
+    if conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]:
+        return True
+    return bool((get_setting(conn, "delivery_city", "") or "").strip() not in ("", "you"))
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
