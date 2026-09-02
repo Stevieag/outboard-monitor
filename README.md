@@ -19,7 +19,7 @@ macOS and Linux.
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/outboard-monitor.git
+git clone https://github.com/Stevieag/outboard-monitor.git
 cd outboard-monitor
 
 # tell it what you are shopping for (or do it in the browser later)
