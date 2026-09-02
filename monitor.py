@@ -442,6 +442,24 @@ def cmd_delivery(conn, args):
         core.set_delivery(conn, args.dealer, args.kind, amount=args.amount,
                           free_over=args.free_over, note=args.note, source="manual")
         print("Set %s -> %s" % (args.dealer, args.kind))
+        if args.postcode:
+            home = core.get_setting(conn, "postcode", "")
+            if not home:
+                print("  (no postcode of your own set, so distance not calculated)")
+            else:
+                miles = core.distance_miles(home, args.postcode)
+                if miles is None:
+                    print("  could not geocode %s - set miles by hand on the "
+                          "Delivery tab" % args.postcode)
+                else:
+                    conn.execute("UPDATE delivery SET miles = ? WHERE dealer = ?",
+                                 (miles, args.dealer))
+                    conn.commit()
+                    cost, label = core.travel_cost(conn, args.dealer)
+                    print("  %s is %.0f road miles away%s"
+                          % (args.postcode.upper(), miles,
+                             (" - about %s to collect" % money(cost, "GBP"))
+                             if cost else ""))
         return
     rows = core.all_delivery(conn)
     dealers = sorted({r["dealer"] for r in core.listings(conn) if r["dealer"]})
@@ -651,6 +669,48 @@ def cmd_serve(conn, args):
     web.serve(args.port, host, open_browser=not args.no_open)
 
 
+DEALER_LOCATORS = [
+    ("Tohatsu UK",   "https://tohatsu.co.uk/dealers"),
+    ("Suzuki Marine","https://marine.suzuki.co.uk/dealer-locator/"),
+    ("Yamaha Marine","https://www.yamaha-motor.eu/gb/en/dealer-locator/"),
+    ("Mercury",      "https://www.mercurymarine.com/en/gb/dealer-locator/"),
+    ("Honda Marine", "https://www.honda.co.uk/marine/dealer-search.html"),
+]
+
+
+def cmd_find_dealers(conn, args):
+    """Help find dealers near you - the ones a national web search misses."""
+    postcode = args.postcode or core.get_setting(conn, "postcode", "")
+    if not postcode:
+        print("No postcode set. Either pass --postcode, or run:  ./monitor.py setup")
+        return
+    place = core.geocode(postcode)
+    if not place:
+        print("Could not look up %r. Check the postcode." % postcode)
+        return
+    lat, lon, district = place
+    print("You are in %s (%s)\n" % (district or "?", postcode.upper()))
+
+    towns = core.nearby_districts(postcode)
+    if towns:
+        print("Council areas near you, useful as search terms:")
+        print("   %s\n" % ", ".join(towns[:12]))
+
+    print("Search these - a plain 'UK outboard dealers' search returns national")
+    print("retailers and misses local ones:\n")
+    for town in (towns[:6] or [district]):
+        print("   outboard dealer %s" % town)
+        print("   outboard service %s" % town)
+    print()
+    print("Then check each manufacturer's own dealer locator, which lists only")
+    print("AUTHORISED dealers - the ones whose warranty registration is valid:\n")
+    for name, url in DEALER_LOCATORS:
+        print("   %-15s %s" % (name, url))
+    print("\nSearch each by postcode %s. When you find one, add its listings and" % postcode.upper())
+    print("record how far it is so collection is costed properly:\n")
+    print('   ./monitor.py delivery --dealer "Their Name" --kind free --postcode WN7 2LH')
+
+
 def cmd_setup(conn, args):
     """Walk through the settings once, on a fresh install."""
     print("Outboard Price Monitor - first-time setup")
@@ -684,6 +744,13 @@ def cmd_setup(conn, args):
         core.set_setting(conn, key, answer)
         changed += 1
     print("\nSaved %d setting(s)." % changed)
+    postcode = core.get_setting(conn, "postcode", "")
+    if postcode:
+        place = core.geocode(postcode)
+        if place:
+            print("\nLooked up %s - you are in %s." % (postcode.upper(), place[2]))
+            print("Run this to find dealers near you (a national search misses them):")
+            print("   ./monitor.py find-dealers")
     if not core.listings(conn):
         print("\nNothing is tracked yet. Add your first listing with:")
         print("   ./monitor.py probe \"https://dealer.example/some-outboard\"")
@@ -875,6 +942,8 @@ def build_parser():
     deliv.add_argument("--amount", type=float, help="flat fee, or fee below the threshold")
     deliv.add_argument("--free-over", type=float, dest="free_over")
     deliv.add_argument("--note")
+    deliv.add_argument("--postcode",
+                       help="the dealer's postcode; sets real road distance from yours")
     deliv.set_defaults(func=cmd_delivery)
 
     cr = subs.add_parser("crawl", help="walk a dealer site and add its outboards")
@@ -905,6 +974,11 @@ def build_parser():
     settings = subs.add_parser("settings", help="view or change settings")
     settings.add_argument("key", nargs="?"), settings.add_argument("value", nargs="?")
     settings.set_defaults(func=cmd_settings)
+
+    findd = subs.add_parser("find-dealers",
+                            help="find dealers near you, including local ones")
+    findd.add_argument("--postcode", help="defaults to your saved postcode")
+    findd.set_defaults(func=cmd_find_dealers)
 
     setup = subs.add_parser("setup", help="guided first-time setup")
     setup.set_defaults(func=cmd_setup)

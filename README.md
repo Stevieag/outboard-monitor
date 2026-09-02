@@ -104,6 +104,27 @@ to pin the right one:
 Handles US (`£18,499.00`) and European (`14.250,00 €`) number formats, and
 GBP/USD/AUD/NZD/CAD/EUR/ZAR.
 
+## Finding dealers near you
+
+A web search for "outboard dealers" returns national online retailers and misses the
+local dealer ten miles away — which is often the cheapest, because you can collect and
+they want the local trade. `find-dealers` uses your postcode to give you the searches
+worth running and the manufacturers' own authorised-dealer locators:
+
+```bash
+./monitor.py find-dealers
+```
+
+It resolves your postcode through [postcodes.io](https://postcodes.io) (free, no key)
+and lists nearby council areas to search by name. Record a dealer's distance by
+postcode and collection gets costed properly:
+
+```bash
+./monitor.py delivery --dealer "SSI Marine" --kind free --postcode "WN7 2LH"
+```
+
+Distances are straight-line × 1.25 to approximate road miles.
+
 ## Delivered price, and collecting
 
 Set what each dealer charges to deliver, and how far away they are, on the dashboard's

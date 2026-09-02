@@ -158,6 +158,73 @@ def is_configured(conn) -> bool:
     return bool((get_setting(conn, "delivery_city", "") or "").strip() not in ("", "you"))
 
 
+# Straight-line distance under-reads what you actually drive; roads wander.
+ROAD_FACTOR = 1.25
+
+
+def geocode(postcode):
+    """UK postcode -> (lat, lon, district) via postcodes.io. None if not found.
+
+    postcodes.io is free and needs no key. Returns None rather than raising so
+    callers can fall back to a hand-entered distance.
+    """
+    import json as _json
+    import scrape as _scrape
+    cleaned = (postcode or "").replace(" ", "").upper()
+    if not cleaned:
+        return None
+    try:
+        raw = _scrape.fetch("https://api.postcodes.io/postcodes/" + cleaned,
+                            respect_robots=False)
+        result = _json.loads(raw).get("result") or {}
+    except Exception:
+        return None
+    if not result.get("latitude"):
+        return None
+    return (result["latitude"], result["longitude"],
+            result.get("admin_district") or result.get("region") or "")
+
+
+def distance_miles(from_postcode, to_postcode):
+    """Approximate ROAD miles between two UK postcodes, or None."""
+    import math
+    a = geocode(from_postcode)
+    b = geocode(to_postcode)
+    if not a or not b:
+        return None
+    (lat1, lon1, _), (lat2, lon2, _) = a, b
+    radius, rad = 3958.8, math.pi / 180
+    h = (math.sin((lat2 - lat1) * rad / 2) ** 2
+         + math.cos(lat1 * rad) * math.cos(lat2 * rad)
+         * math.sin((lon2 - lon1) * rad / 2) ** 2)
+    straight = 2 * radius * math.asin(math.sqrt(h))
+    return round(straight * ROAD_FACTOR, 1)
+
+
+def nearby_districts(postcode, limit=30):
+    """Council districts near a postcode - useful as local search terms."""
+    import json as _json
+    import re as _re
+    import scrape as _scrape
+    # the outward code is everything except the final three characters ("M1 1AE" -> "M1")
+    cleaned = (postcode or "").upper().replace(" ", "")
+    outcode = cleaned[:-3] if len(cleaned) > 3 else cleaned
+    if not _re.match(r"^[A-Z]{1,2}\d{1,2}[A-Z]?$", outcode):
+        return []
+    try:
+        raw = _scrape.fetch("https://api.postcodes.io/outcodes/%s/nearest?limit=%d"
+                            % (outcode, limit), respect_robots=False)
+        results = _json.loads(raw).get("result") or []
+    except Exception:
+        return []
+    seen = []
+    for row in results:
+        for value in (row.get("admin_district") or []):
+            if value and "unparished" not in value.lower() and value not in seen:
+                seen.append(value)
+    return seen
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
