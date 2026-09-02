@@ -210,6 +210,22 @@ the real five-year figure:
 Data lives in `prices.db` beside the scripts. It is gitignored — your tracked prices
 and settings stay local.
 
+## Tests
+
+```bash
+./tests/journey.sh
+```
+
+Runs the whole user journey against a throwaway database — empty install, guided
+setup, dealer discovery, probing a real page, adding listings, delivery by postcode,
+a live price check, every list view, editing, scheduling, and every web page and form
+over HTTP. 34 checks. It needs a network because it hits real dealer sites, and it
+leaves your own `prices.db` alone.
+
+It earned its keep immediately: it caught that columns added to a developer's database
+by hand were missing from the schema, so a fresh clone crashed on any page that costed
+up collection.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

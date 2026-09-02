@@ -55,12 +55,16 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Reputation notes per brand (or brand+hp), shown beside each listing.
 CREATE TABLE IF NOT EXISTS reviews (
-    brand      TEXT NOT NULL,
-    hp         REAL,             -- NULL = applies to the whole brand
-    verdict    TEXT,             -- one-word summary, e.g. "excellent", "budget"
-    summary    TEXT,
-    source     TEXT,
-    updated_at TEXT,
+    brand          TEXT NOT NULL,
+    hp             REAL,          -- NULL = applies to the whole brand
+    verdict        TEXT,          -- one-word summary, e.g. "excellent", "budget"
+    summary        TEXT,
+    warranty       TEXT,          -- term and conditions, in prose
+    corrosion      TEXT,          -- what salt corrosion cover there is
+    warranty_years INTEGER,       -- for the cost-of-ownership sums
+    dealer_service TEXT,          -- yes|no|partial|unknown - is dealer servicing required
+    source         TEXT,
+    updated_at     TEXT,
     PRIMARY KEY (brand, hp)
 );
 
@@ -70,6 +74,7 @@ CREATE TABLE IF NOT EXISTS delivery (
     kind       TEXT NOT NULL DEFAULT 'quote',   -- flat|free|threshold|collect|quote
     amount     REAL,        -- flat fee, or fee below the threshold
     free_over  REAL,        -- order value at/above which delivery is free
+    miles      REAL,        -- road distance from you, for collection costing
     note       TEXT,
     source     TEXT,
     updated_at TEXT
@@ -250,9 +255,30 @@ def connect(path: str = None) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first release. Existing databases get them on open,
+# so an older prices.db keeps working instead of raising "No item with that key".
+MIGRATIONS = [
+    ("listings", "model_code", "TEXT"),
+    ("delivery", "miles", "REAL"),
+    ("reviews", "warranty", "TEXT"),
+    ("reviews", "corrosion", "TEXT"),
+    ("reviews", "warranty_years", "INTEGER"),
+    ("reviews", "dealer_service", "TEXT"),
+]
+
+
+def _migrate(conn) -> None:
+    for table, column, decl in MIGRATIONS:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+        if column not in existing:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, decl))
+    conn.commit()
+
+
 def init_db(path: str = None) -> sqlite3.Connection:
     conn = connect(path)
     conn.executescript(SCHEMA)
+    _migrate(conn)
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     conn.commit()
