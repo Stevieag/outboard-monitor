@@ -1,0 +1,12 @@
+# your tracked prices and settings - personal, never commit
+prices.db
+prices.db-shm
+prices.db-wal
+*.csv
+
+# logs from scheduled checks
+check.log
+*.log
+
+# macOS
+.DS_Store

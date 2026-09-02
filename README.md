@@ -1,0 +1,180 @@
+# ⚓ Outboard Price Monitor
+
+Track outboard motor prices across dealer websites, record the history, chart it, and
+get alerted when a motor drops or comes within your budget.
+
+Ranks listings on **what a motor actually costs you** — the price plus whichever is
+cheaper, delivery or driving there to collect — so a cheap motor with £300 of freight
+doesn't beat a dearer one you can pick up.
+
+**Pure Python 3 standard library.** No pip install, no Node, no build step. Runs on
+macOS and Linux.
+
+![no dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
+![python](https://img.shields.io/badge/python-3.8%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-blue)
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/YOUR-USERNAME/outboard-monitor.git
+cd outboard-monitor
+
+# see what prices a dealer page exposes, and which rule to use
+./monitor.py probe "https://dealer.example/yamaha-f6"
+
+# track it
+./monitor.py add "Yamaha F6 short shaft" "https://dealer.example/yamaha-f6" \
+    --brand Yamaha --hp 6 --shaft S --dealer "Coastal Marine" --currency GBP
+
+# open the dashboard
+./monitor.py serve
+```
+
+Then set it running by itself:
+
+```bash
+./monitor.py schedule --at 09:00        # daily at 9am (macOS launchd)
+```
+
+Price drops and motors newly within budget raise a desktop notification.
+
+## Stocking it quickly
+
+Most dealers run Shopify or WooCommerce, and both expose a product feed that lists
+every item with its price — far quicker than adding listings by hand:
+
+- Shopify: `https://dealer.example/products.json?limit=250`
+- WooCommerce: `https://dealer.example/wp-json/wc/store/v1/products?per_page=100`
+
+For dealers without a feed, `crawl` walks their `sitemap.xml` (falling back to a
+link walk) and adds any product page it can price:
+
+```bash
+./monitor.py crawl "https://dealer.example" --dealer "Name" --dry-run
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `add LABEL URL` | Track a listing (`--brand --hp --shaft --dealer --target --rule --currency`) |
+| `list` | Listings by delivered price, cheapest first. `--under`, `--brand`, `--min-hp`, `--max-hp`, `--dealer`, `--per-model`, `--tco`, `--links`, `--reviews`, `--limit` |
+| `check [ids…]` | Fetch prices now. `--debug` shows candidates when extraction fails |
+| `probe URL` | Dry run a page: every price found, plus the rule to pin the right one |
+| `compare MODEL` | Price one model (`DF6`, `MFS6`) across every dealer, via manufacturer model codes |
+| `history ID` | Price timeline for one listing |
+| `delivery` | View or set per-dealer delivery cost and road miles from you |
+| `reviews` | Reputation, warranty terms and corrosion cover per brand/model |
+| `alerts` | Drops, rises, target hits and budget hits |
+| `serve` | Web dashboard. `--lan` to reach it from other devices |
+| `crawl URL` | Walk a dealer's sitemap and add its outboards |
+| `export` | Dump all history to CSV |
+| `settings [key value]` | View or change settings |
+| `schedule --at HH:MM` | Install/remove the launchd job for automatic checks |
+| `edit ID` / `rm ID` | Change or delete a listing |
+
+## How prices are found
+
+Each listing has an extraction rule. The default, `auto`, tries in order:
+
+1. **JSON-LD** structured data (`schema.org/Offer`) — what most modern dealer sites emit
+2. **Price meta tags** (`product:price:amount`, `og:price:amount`, `itemprop=price`)
+3. **Price-styled elements** — anything whose class/id looks like a price, with
+   struck-through RRP/"was" prices excluded so you get the *sale* price
+4. **Page text** — any currency-marked amount, as a last resort
+
+When `auto` picks the wrong number, `probe` prints every candidate and the exact rule
+to pin the right one:
+
+| Rule | Example |
+|---|---|
+| `css:SELECTOR` | `css:.price--sale`, `css:p.price > ins` |
+| `attr:SELECTOR@ATTR` | `attr:meta[property=product:price:amount]@content` |
+| `jsonld:KEY` | `jsonld:lowPrice` |
+| `regex:PATTERN` | `regex:Our Price[^0-9]{0,20}([\d,]+)` |
+| `textregex:PATTERN` | Runs over the page's visible text with whitespace collapsed, so markup between label and price doesn't matter — and lets one category page feed many listings |
+
+Handles US (`£18,499.00`) and European (`14.250,00 €`) number formats, and
+GBP/USD/AUD/NZD/CAD/EUR/ZAR.
+
+## Delivered price, and collecting
+
+Set what each dealer charges to deliver, and how far away they are, on the dashboard's
+**Delivery** tab. Each listing is then costed on whichever is cheaper — having it
+delivered, or driving to collect.
+
+```bash
+./monitor.py settings postcode "M1 1AE"
+./monitor.py settings max_travel_miles 150     # how far you will drive
+./monitor.py settings travel_per_mile 0.25     # running cost per mile, round trip
+./monitor.py settings free_collect "Local Marine,Other Dealer"
+```
+
+Where delivery is unknown a listing shows `£945+?` and sorts below every known
+delivered price — it is **never** treated as free.
+
+## Shopping criteria
+
+The app remembers what you are looking for and applies it to the dashboard *and* the
+alerts, so you are not pinged about motors you would never buy:
+
+```bash
+./monitor.py settings budget 2000        # alert when a delivered price falls to this
+./monitor.py settings min_hp 4
+./monitor.py settings shaft S            # S, L, XL, UL - blank for any
+```
+
+## Cost of ownership
+
+Manufacturer warranties often require dealer servicing for the whole term, which can
+cost more than the difference between two motors. Record the rates and `--tco` shows
+the real five-year figure:
+
+```bash
+./monitor.py settings service_year1 100
+./monitor.py settings service_year_n 200
+./monitor.py list --under 2000 --per-model --tco
+```
+
+## Settings
+
+| Key | Meaning |
+|---|---|
+| `budget` | Alert when a matching motor's delivered price falls to/below this |
+| `min_hp` / `max_hp` / `shaft` | What you are shopping for |
+| `postcode` / `delivery_city` | Where quotes are for |
+| `max_travel_miles` / `travel_per_mile` / `free_collect` | Collection costing |
+| `service_year1` / `service_year_n` / `own_years` | Cost-of-ownership inputs |
+| `drop_alert_pct` | Minimum % drop that triggers a notification |
+| `min_plausible` / `max_plausible` | Ignore amounts outside this range |
+| `respect_robots` | Honour the site's robots.txt (default on) |
+| `notify_macos` | Desktop notifications |
+
+## Being a good citizen
+
+- One request per host every 4 seconds, with a normal browser User-Agent
+- `robots.txt` honoured by default
+- Keep the check interval at hours, not minutes — you are monitoring a dealer, not
+  stress-testing them
+- Some retailers render prices in JavaScript or block non-browser requests
+  (`blocked` status). `probe` tells you which. Those need a real browser.
+
+## How it fits together
+
+| File | |
+|---|---|
+| `monitor.py` | CLI, check engine, alerting, scheduling |
+| `scrape.py` | Fetching (urllib with a curl fallback), a mini HTML DOM with CSS selectors, price extraction |
+| `core.py` | SQLite storage, delivery/travel costing, criteria, reviews |
+| `web.py` | Dashboard and inline SVG charts |
+| `crawl.py` | Sitemap and link walking |
+
+Data lives in `prices.db` beside the scripts. It is gitignored — your tracked prices
+and settings stay local.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
