@@ -59,6 +59,11 @@ link walk) and adds any product page it can price:
 ./monitor.py crawl "https://dealer.example" --dealer "Name" --dry-run
 ```
 
+Always `--dry-run` first. It identifies a motor by the word "outboard", an HP figure
+next to engine/motor/stroke/shaft, or a model code like `MFS6`/`DF6`, then rejects
+accessories by title. Dealers whose titles carry neither — Mercury's bare "FOURSTROKE 6",
+for instance — need `add` or a product feed instead.
+
 ## Commands
 
 | Command | What it does |

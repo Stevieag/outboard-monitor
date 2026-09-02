@@ -14,8 +14,18 @@ import scrape
 SITEMAP_PATHS = ("/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml",
                  "/sitemap1.xml", "/product-sitemap.xml")
 
-# URL/title words that suggest a motor rather than a part
-WANT = re.compile(r"outboard|engine|motor", re.I)
+# What marks a page as an outboard MOTOR rather than a part or an instrument.
+# "engine" on its own is far too loose - it matches engine mounts, engine oil,
+# and marine instruments like the "NASA Clipper AIS Engine".
+WANT = re.compile(r"outboard", re.I)
+# a title may say "6hp 4-stroke engine" without the word outboard
+# many dealers title a motor "Tohatsu 6hp 4-Stroke Short Shaft" with no such word,
+# so an HP figure next to engine/motor/stroke/shaft counts too
+WANT_TITLE = re.compile(
+    r"outboard"
+    r"|\b\d{1,3}(?:\.\d)?\s*(?:hp|ps)\b.{0,45}\b(?:engine|motor|stroke|shaft)\b"
+    r"|\b(?:engine|motor|stroke|shaft)\b.{0,45}\b\d{1,3}(?:\.\d)?\s*(?:hp|ps)\b"
+    r"|\b(?:MFS|DF|BF|FT)\s?\d", re.I)
 SKIP_URL = re.compile(r"/(blog|news|about|contact|policies|account|cart|checkout|search|"
                       r"pages/|collections/all|tag/|category/)", re.I)
 # non-English locale prefixes on multilingual sites - same products, duplicate URLs
@@ -129,7 +139,7 @@ def inspect(url: str, lo: float, hi: float):
             title = re.split(r"\s+[|\u2013-]\s+", title)[0].strip()
     if not title or SKIP_TITLE.search(title):
         return None
-    if not WANT.search(title):
+    if not WANT_TITLE.search(title):
         return None
     body = scrape.select(root, "body")
     # search the whole page: many sites open with several KB of navigation
