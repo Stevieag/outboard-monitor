@@ -25,6 +25,9 @@ cd outboard-monitor
 # tell it what you are shopping for (or do it in the browser later)
 ./monitor.py setup
 
+# fill it from dealers known to publish prices - no listings to add by hand
+./monitor.py populate
+
 # see what prices a dealer page exposes, and which rule to use
 ./monitor.py probe "https://dealer.example/yamaha-f6"
 

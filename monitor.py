@@ -481,77 +481,186 @@ def cmd_delivery(conn, args):
                      (row["note"] or "")[:44]))
 
 
-def cmd_crawl(conn, args):
-    """Walk a dealer site and add every outboard product page it can price."""
+# Dealers known to stock outboards and to publish prices a crawl can read.
+# These are national online retailers - they ship UK-wide, so they are useful
+# wherever you are. Your postcode only decides which are worth COLLECTING from,
+# which `delivery --postcode` works out separately.
+SEED_DEALERS = [
+    ("BoatWorld",               "https://boatworld.co.uk"),
+    ("Seamark Nunn",            "https://seamarknunn.com"),
+    ("Marine Chandlery",        "https://www.marinechandlery.com"),
+    ("Outboard & Marine",       "https://www.outboardandmarine.co.uk"),
+    ("Clyde Outboard Services", "https://www.clyde-outboard-services.co.uk"),
+    ("Dulas Boats",             "https://dulasboats.co.uk"),
+    ("Ash Marine",              "https://www.ashmarine.co.uk"),
+    ("Gael Force Marine",       "https://www.gaelforcemarine.co.uk"),
+    ("Cambridge Outboards",     "https://www.cambridgeoutboards.co.uk"),
+    ("Nestaway Boats",          "https://nestawayboats.com"),
+    ("Whitstable Marine",       "https://www.whitstablemarine.co.uk"),
+    ("Bill Higham Marine",      "https://www.billhigham.co.uk"),
+]
+
+
+def _listing_facts(title, url):
+    """Pull brand, HP and shaft out of a product title. Returns a dict."""
+    hp = None
+    hp_match = re.search(r"(\d{1,3}(?:\.\d)?)\s*hp\b", title, re.I)
+    if hp_match:
+        try:
+            value = float(hp_match.group(1))
+            hp = value if 1 <= value <= 700 else None
+        except ValueError:
+            hp = None
+    brand = next((b for b in ("Yamaha", "Mercury", "Mariner", "Suzuki", "Tohatsu",
+                              "Honda", "ePropulsion", "Torqeedo", "Parsun", "Hidea",
+                              "Selva", "Minn Kota")
+                  if b.lower() in title.lower()), None)
+    low = title.lower()
+    shaft = ("UL" if "ultra long" in low else "XL" if "extra long" in low
+             else "L" if "long shaft" in low
+             else "S" if ("short shaft" in low or "standard shaft" in low) else None)
+    code = core.model_code(title, url)
+    if hp is None:
+        # Dealers often title a page just "Suzuki DF6" with no "6hp" anywhere,
+        # so fall back to the horsepower encoded in the model code. Only ever a
+        # fallback: an explicit "6hp" in the title always wins.
+        hp = core.hp_from_code(code, brand)
+    return {"hp": hp, "brand": brand, "shaft": shaft, "code": code}
+
+
+def _crawl_site(conn, site, dealer, pattern=None, max_pages=120, dry_run=False,
+                quiet=False):
+    """Walk one dealer site, adding every outboard it can price.
+
+    Shared by `crawl` (one site named on the command line) and `populate`
+    (every seed dealer in turn). Returns (added, skipped, nomatch).
+    """
     import crawl
     lo = core.get_float_setting(conn, "min_plausible", 400)
     hi = core.get_float_setting(conn, "max_plausible", 150000)
-    dealer = args.dealer or urlparse(args.url).netloc.replace("www.", "")
 
-    print("Discovering pages on %s ..." % args.url)
-    urls, how, total = crawl.candidate_urls(args.url, args.pattern)
-    print("  %s: %d urls, %d look like motors" % (how, total, len(urls)))
-    if args.max:
-        urls = urls[:args.max]
+    if not quiet:
+        print("Discovering pages on %s ..." % site)
+    try:
+        urls, how, total = crawl.candidate_urls(site, pattern)
+    except Exception as exc:
+        print("  could not read %s (%s)" % (site, type(exc).__name__))
+        return 0, 0, 0
+    if not quiet:
+        print("  %s: %d urls, %d look like motors" % (how, total, len(urls)))
+    if max_pages:
+        urls = urls[:max_pages]
     if not urls:
-        print("Nothing to inspect. Try --pattern to widen the URL filter.")
-        return
+        if not quiet:
+            print("Nothing to inspect. Try --pattern to widen the URL filter.")
+        return 0, 0, 0
 
     existing = {r["url"] for r in core.listings(conn)}
     added = skipped = nomatch = 0
-    print("Inspecting %d pages (about %d min at the polite rate)...\n"
-          % (len(urls), max(1, len(urls) * 4 // 60)))
+    if not quiet:
+        print("Inspecting %d pages (about %d min at the polite rate)...\n"
+              % (len(urls), max(1, len(urls) * 4 // 60)))
     for index, url in enumerate(urls, 1):
         if url in existing:
             skipped += 1
             continue
-        found = crawl.inspect(url, lo, hi)
+        try:
+            found = crawl.inspect(url, lo, hi)
+        except Exception:
+            nomatch += 1
+            continue
         if not found:
             nomatch += 1
             continue
         title = found["title"]
-        if args.dry_run:
-            print("  %9s  %s" % (money(found["price"], found["currency"]), title[:60]))
+        if dry_run:
+            if not quiet:
+                print("  %9s  %s" % (money(found["price"], found["currency"]), title[:60]))
             added += 1
             continue
-        code = core.model_code(title, url)
-        hp = None
-        hp_match = re.search(r"(\d{1,3}(?:\.\d)?)\s*hp\b", title, re.I)
-        if hp_match:
-            try:
-                value = float(hp_match.group(1))
-                hp = value if 1 <= value <= 700 else None
-            except ValueError:
-                hp = None
-        brand = next((b for b in ("Yamaha", "Mercury", "Mariner", "Suzuki", "Tohatsu",
-                                  "Honda", "ePropulsion", "Torqeedo", "Parsun", "Hidea",
-                                  "Selva", "Minn Kota")
-                      if b.lower() in title.lower()), None)
-        low = title.lower()
-        shaft = ("UL" if "ultra long" in low else "XL" if "extra long" in low
-                 else "L" if "long shaft" in low
-                 else "S" if ("short shaft" in low or "standard shaft" in low) else None)
+        facts = _listing_facts(title, url)
         try:
-            core.add_listing(conn, title, url, dealer=dealer, brand=brand, hp=hp,
-                             shaft=shaft, rule="auto", currency=found["currency"] or "GBP",
+            core.add_listing(conn, title, url, dealer=dealer, brand=facts["brand"],
+                             hp=facts["hp"], shaft=facts["shaft"], rule="auto",
+                             currency=found["currency"] or "GBP",
                              notes="found by crawl; listed %s"
                                    % money(found["price"], found["currency"]))
         except Exception:
             skipped += 1
             continue
-        if code:
+        if facts["code"]:
             listing_id = conn.execute("SELECT id FROM listings WHERE url = ?",
                                       (url,)).fetchone()["id"]
-            core.update_listing(conn, listing_id, model_code=code)
+            core.update_listing(conn, listing_id, model_code=facts["code"])
         existing.add(url)
         added += 1
-        print("  %9s  %-52s %s" % (money(found["price"], found["currency"]),
-                                   title[:52], code or ""))
-        if index % 25 == 0:
-            print("  ... %d/%d inspected" % (index, len(urls)))
+        if not quiet:
+            print("  %9s  %-52s %s" % (money(found["price"], found["currency"]),
+                                       title[:52], facts["code"] or ""))
+            if index % 25 == 0:
+                print("  ... %d/%d inspected" % (index, len(urls)))
+    return added, skipped, nomatch
 
+
+def cmd_crawl(conn, args):
+    """Walk a dealer site and add every outboard product page it can price."""
+    dealer = args.dealer or urlparse(args.url).netloc.replace("www.", "")
+    added, skipped, nomatch = _crawl_site(
+        conn, args.url, dealer, pattern=args.pattern, max_pages=args.max,
+        dry_run=args.dry_run)
     print("\n%s %d listing(s). %d already tracked, %d pages had no priced motor."
           % ("Would add" if args.dry_run else "Added", added, skipped, nomatch))
+
+
+def cmd_populate(conn, args):
+    """Fill an empty install from the seed dealers, then price what it found."""
+    only = {d.strip().lower() for d in (args.only or "").split(",") if d.strip()}
+    seeds = [(n, u) for n, u in SEED_DEALERS
+             if not only or n.lower() in only or urlparse(u).netloc.replace("www.", "") in only]
+    if not seeds:
+        print("No seed dealer matched --only. Known dealers:")
+        for name, _ in SEED_DEALERS:
+            print("   %s" % name)
+        return
+
+    postcode = core.get_setting(conn, "postcode", "")
+    print("Populating from %d dealer(s)." % len(seeds))
+    if postcode:
+        print("Your postcode is %s, so collection distances can be worked out "
+              "afterwards." % postcode.upper())
+    else:
+        print("No postcode set - listings will be added, but collection cannot be "
+              "costed until you run: ./monitor.py settings postcode \"YOUR POSTCODE\"")
+    print("This walks real dealer sites at a polite rate, so it takes a while.\n")
+
+    totals = []
+    for number, (name, site) in enumerate(seeds, 1):
+        print("-- [%d/%d] %s  (%s)" % (number, len(seeds), name, site))
+        added, skipped, nomatch = _crawl_site(
+            conn, site, name, pattern=args.pattern, max_pages=args.max,
+            dry_run=args.dry_run, quiet=args.quiet)
+        totals.append((name, added, skipped))
+        print("   %s %d, already had %d, %d pages with no priced motor\n"
+              % ("would add" if args.dry_run else "added", added, skipped, nomatch))
+
+    grand = sum(t[1] for t in totals)
+    print("=" * 62)
+    print("%s %d listing(s) across %d dealer(s):"
+          % ("Would add" if args.dry_run else "Added", grand, len(totals)))
+    for name, added, skipped in sorted(totals, key=lambda t: -t[1]):
+        print("   %-26s %4d new  (%d already tracked)" % (name[:26], added, skipped))
+    if args.dry_run:
+        print("\nDry run - nothing was saved. Drop --dry-run to keep them.")
+        return
+    if not grand:
+        print("\nNothing new to add - you already track everything these dealers list.")
+        return
+    print("\nNow run these to finish setting up:")
+    print("   ./monitor.py check                     # get a price for each")
+    if postcode:
+        print('   ./monitor.py delivery --dealer "NAME" --kind free --postcode "THEIRS"')
+        print("                                          # per dealer, for collection")
+    print("   ./monitor.py serve                     # open the dashboard")
 
 
 def cmd_compare(conn, args):
@@ -970,6 +1079,19 @@ def build_parser():
     cr.add_argument("--pattern", help="regex the URL must match (default: outboard|engine|motor)")
     cr.add_argument("--dry-run", action="store_true", help="show what it would add")
     cr.set_defaults(func=cmd_crawl)
+
+    pop = subs.add_parser("populate",
+                          help="fill an empty install from known outboard dealers")
+    pop.add_argument("--max", type=int, default=120,
+                     help="most pages to inspect per dealer (default 120)")
+    pop.add_argument("--only",
+                     help="comma-separated dealer names, instead of all of them")
+    pop.add_argument("--pattern", help="regex the URL must match")
+    pop.add_argument("--dry-run", action="store_true",
+                     help="show what it would add without saving")
+    pop.add_argument("--quiet", action="store_true",
+                     help="one line per dealer instead of per listing")
+    pop.set_defaults(func=cmd_populate)
 
     comp = subs.add_parser("compare",
                            help="price one model (e.g. DF6) across every dealer")

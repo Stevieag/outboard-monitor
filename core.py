@@ -563,6 +563,36 @@ MODEL_PATTERNS = [
 ]
 
 
+# Electric outboards print kW or pounds of thrust in the model name, not HP,
+# so a number lifted from their code would be meaningless.
+NON_HP_BRANDS = ("epropulsion", "torqeedo", "minn kota", "minn-kota", "haswing")
+
+
+def hp_from_code(code, brand=None):
+    """Infer HP from a manufacturer model code, e.g. DF6AS -> 6, MFS9.8B -> 9.8.
+
+    Outboard codes are a maker's prefix followed by the horsepower: Suzuki DF6,
+    Tohatsu MFS9.8, Honda BF5, Yamaha F20. Used only as a fallback when the
+    title never says "6hp" outright, which is common on dealer sites that title
+    a page just "Suzuki DF6".
+
+    Returns None for electric motors and for anything outside 1-700 HP.
+    """
+    import re as _re
+    if not code:
+        return None
+    if brand and brand.strip().lower() in NON_HP_BRANDS:
+        return None
+    match = _re.match(r"^[A-Z]{1,4}(\d{1,3}(?:\.\d)?)", code.strip().upper())
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if 1 <= value <= 700 else None
+
+
 def model_code(label, url=""):
     """Pull a manufacturer model code out of a listing title or URL.
 

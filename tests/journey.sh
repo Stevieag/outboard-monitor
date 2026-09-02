@@ -45,6 +45,14 @@ step "4. Probe a real dealer page before adding"
 ./monitor.py probe "https://boatworld.co.uk/products/tohatsu-4-stroke-6hp-outboard-engine" 2>&1 | tee $D/j_probe.txt | tail -3
 grep -q "auto would pick" $D/j_probe.txt && ok "probe found a price and suggested a rule" || bad "probe"
 
+step "4b. Populate from a seed dealer (what an empty install does)"
+try "populate --dry-run" './monitor.py populate --only "Dulas Boats" --max 4 --dry-run'
+./monitor.py populate --only "Dulas Boats" --max 4 --quiet >/dev/null 2>&1
+[ "$(./monitor.py list --all-hp 2>/dev/null | grep -c '^[0-9]')" -ge 1 ] \
+  && ok "populate added listings" || bad "populate added nothing"
+[ "$(./monitor.py list --all-hp 2>/dev/null | grep -c 'Dulas')" -ge 1 ] \
+  && ok "listings filed under the dealer" || bad "dealer not recorded"
+
 step "5. Add three listings"
 try "add Tohatsu 6hp"  './monitor.py add "Tohatsu 6hp short shaft" "https://boatworld.co.uk/products/tohatsu-4-stroke-6hp-outboard-engine" --brand Tohatsu --hp 6 --shaft S --dealer BoatWorld --currency GBP'
 try "add Honda 5hp"    './monitor.py add "Honda 5hp short shaft" "https://boatworld.co.uk/products/honda-5hp-4-stroke-short-shaft-outboard-engine" --brand Honda --hp 5 --shaft S --dealer BoatWorld --currency GBP'
