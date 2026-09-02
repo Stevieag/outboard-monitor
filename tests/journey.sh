@@ -83,6 +83,10 @@ try "reviews"             './monitor.py reviews'
 try "export"              './monitor.py export --out '"$D"'/j_export.csv'
 [ -s $D/j_export.csv ] && ok "csv written" || bad "csv empty"
 
+step "8b. Backfill horsepower from titles"
+try "backfill-hp --dry-run" './monitor.py backfill-hp --dry-run'
+try "backfill-hp"          './monitor.py backfill-hp'
+
 step "9. Edit and remove"
 try "edit target"  './monitor.py edit 1 --target 1000'
 try "pause"        './monitor.py edit 2 --pause'

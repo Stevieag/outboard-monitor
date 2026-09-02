@@ -516,14 +516,6 @@ SEED_DEALERS = [
 
 def _listing_facts(title, url):
     """Pull brand, HP and shaft out of a product title. Returns a dict."""
-    hp = None
-    hp_match = re.search(r"(\d{1,3}(?:\.\d)?)\s*hp\b", title, re.I)
-    if hp_match:
-        try:
-            value = float(hp_match.group(1))
-            hp = value if 1 <= value <= 700 else None
-        except ValueError:
-            hp = None
     brand = next((b for b in ("Yamaha", "Mercury", "Mariner", "Suzuki", "Tohatsu",
                               "Honda", "ePropulsion", "Torqeedo", "Parsun", "Hidea",
                               "Selva", "Minn Kota")
@@ -533,11 +525,9 @@ def _listing_facts(title, url):
              else "L" if "long shaft" in low
              else "S" if ("short shaft" in low or "standard shaft" in low) else None)
     code = core.model_code(title, url)
-    if hp is None:
-        # Dealers often title a page just "Suzuki DF6" with no "6hp" anywhere,
-        # so fall back to the horsepower encoded in the model code. Only ever a
-        # fallback: an explicit "6hp" in the title always wins.
-        hp = core.hp_from_code(code, brand)
+    # Titles state the size three different ways - "6hp", "Suzuki DF6", and
+    # "Mercury 9.9EL" - so infer_hp tries each in order of trustworthiness.
+    hp = core.infer_hp(title, code, brand)
     return {"hp": hp, "brand": brand, "shaft": shaft, "code": code}
 
 
@@ -680,6 +670,34 @@ def cmd_populate(conn, args):
         print('   ./monitor.py delivery --dealer "NAME" --kind free --postcode "THEIRS"')
         print("                                          # per dealer, for collection")
     print("   ./monitor.py serve                     # open the dashboard")
+
+
+def cmd_backfill_hp(conn, args):
+    """Fill in horsepower on listings added before it could be worked out."""
+    rows = [r for r in core.listings(conn) if r["hp"] is None]
+    if not rows:
+        print("Every listing already has a horsepower.")
+        return
+    found = []
+    for listing in rows:
+        guess = core.infer_hp(listing["label"], listing["model_code"], listing["brand"])
+        if guess is not None:
+            found.append((listing, guess))
+    print("%d listing(s) have no horsepower; %d can be worked out from the title.\n"
+          % (len(rows), len(found)))
+    for listing, guess in found:
+        print("   %-56s -> %s hp" % (listing["label"][:56], guess))
+        if not args.dry_run:
+            core.update_listing(conn, listing["id"], hp=guess)
+    if args.dry_run:
+        print("\nDry run - nothing changed. Drop --dry-run to save.")
+    elif found:
+        print("\nUpdated %d listing(s). They will now be matched by the "
+              "min_hp / max_hp filter." % len(found))
+    left = len(rows) - len(found)
+    if left:
+        print("\n%d still unknown - the dealer's title never says the size. Set "
+              "those by hand:\n   ./monitor.py edit ID --hp N" % left)
 
 
 def cmd_compare(conn, args):
@@ -1111,6 +1129,11 @@ def build_parser():
     pop.add_argument("--quiet", action="store_true",
                      help="one line per dealer instead of per listing")
     pop.set_defaults(func=cmd_populate)
+
+    bf = subs.add_parser("backfill-hp",
+                         help="work out missing horsepower from listing titles")
+    bf.add_argument("--dry-run", action="store_true", help="show what it would set")
+    bf.set_defaults(func=cmd_backfill_hp)
 
     comp = subs.add_parser("compare",
                            help="price one model (e.g. DF6) across every dealer")

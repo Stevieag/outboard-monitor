@@ -568,6 +568,60 @@ MODEL_PATTERNS = [
 NON_HP_BRANDS = ("epropulsion", "torqeedo", "minn kota", "minn-kota", "haswing")
 
 
+def hp_from_title(title):
+    """Horsepower stated outright in a title: "6hp", "2.5 H.P", "60 BHP".
+
+    Dealers write it every which way, so the periods and spacing in "H.P." are
+    all optional. This is the most reliable signal there is - a title that says
+    the size is never second-guessed.
+    """
+    import re as _re
+    if not title:
+        return None
+    match = _re.search(r"(\d{1,3}(?:\.\d)?)\s*(?:h\.?\s*p\.?|bhp)(?![a-z])",
+                       title, _re.I)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if 1 <= value <= 700 else None
+
+
+HP_BRANDS = ("mercury", "mariner", "yamaha", "suzuki", "tohatsu", "honda",
+             "parsun", "hidea", "selva")
+
+
+def hp_from_model_text(title):
+    """Horsepower read out of a maker's model designation in a title.
+
+    "Mercury 9.9EL", "Mercury F20ML", "Mercury F3.5M" - the number after the
+    brand IS the horsepower, with the letters saying shaft length and start
+    type. Only a last resort: it is wrong for a title like "3.5HP TOHATSU
+    M3.5B2", which hp_from_title reads correctly first.
+    """
+    import re as _re
+    if not title:
+        return None
+    match = _re.search(r"\b(?:%s)\s+(?:[A-Z]{1,3})?(\d{1,3}(?:\.\d)?)\s*[A-Z]{0,4}\b"
+                       % "|".join(HP_BRANDS), title, _re.I)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if 1 <= value <= 700 else None
+
+
+def infer_hp(title, code=None, brand=None):
+    """Best guess at horsepower, most trustworthy signal first."""
+    return (hp_from_title(title)
+            or hp_from_code(code, brand)
+            or hp_from_model_text(title))
+
+
 def hp_from_code(code, brand=None):
     """Infer HP from a manufacturer model code, e.g. DF6AS -> 6, MFS9.8B -> 9.8.
 
