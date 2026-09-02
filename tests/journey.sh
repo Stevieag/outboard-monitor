@@ -6,6 +6,13 @@
 # Hits real dealer sites, so it takes a couple of minutes and needs a network.
 # Uses a throwaway database; your own prices.db is untouched.
 #
+# The postcode paths (geocoding, distance, delivery-by-postcode) hit the live
+# postcodes.io API, so they need REAL postcodes - a made-up one does not resolve.
+# The two below are landmarks (Manchester city centre, Buckingham Palace), chosen
+# so no contributor's own address ends up in the repo. Override to test your area:
+#
+#   OUTBOARD_TEST_POSTCODE="..." OUTBOARD_TEST_DEALER_POSTCODE="..." ./tests/journey.sh
+#
 #   ./tests/journey.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -13,6 +20,9 @@ D=$(mktemp -d)
 export OUTBOARD_DB=$D/journey.db
 rm -f "$OUTBOARD_DB" "$OUTBOARD_DB-shm" "$OUTBOARD_DB-wal" 2>/dev/null
 PASS=0; FAIL=0
+# Landmark postcodes, not anyone's home. Must be real: postcodes.io is queried.
+PC=${OUTBOARD_TEST_POSTCODE:-M1 1AE}
+DEALER_PC=${OUTBOARD_TEST_DEALER_POSTCODE:-SW1A 1AA}
 step() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 ok()   { PASS=$((PASS+1)); printf "   PASS  %s\n" "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf "   FAIL  %s\n" "$1"; }
@@ -23,8 +33,8 @@ step "1. Fresh clone - what does a new user see?"
 ./monitor.py settings 2>&1 | grep -q "fresh install" && ok "settings suggests running setup" || bad "no setup hint"
 
 step "2. Guided setup (answering the prompts)"
-printf '1500\n5\n8\nS\nManchester\nM1 1AE\n60\n0.30\n\n90\n180\n5\n2\n1\n400\n150000\n1\n' | ./monitor.py setup 2>&1 | tail -3
-[ "$(./monitor.py settings | grep -c 'M1 1AE')" -ge 1 ] && ok "postcode saved" || bad "postcode not saved"
+printf '1500\n5\n8\nS\nManchester\n%s\n60\n0.30\n\n90\n180\n5\n2\n1\n400\n150000\n1\n' "$PC" | ./monitor.py setup 2>&1 | tail -3
+[ "$(./monitor.py settings | grep -c "$PC")" -ge 1 ] && ok "postcode saved" || bad "postcode not saved"
 [ "$(./monitor.py settings | grep -c '1500')" -ge 1 ] && ok "budget saved" || bad "budget not saved"
 
 step "3. Find local dealers"
@@ -42,7 +52,7 @@ try "add Mercury 6hp"  './monitor.py add "Mercury FourStroke 6" "https://dulasbo
 [ "$(./monitor.py list --all-hp 2>/dev/null | grep -c '^[0-9]')" -ge 3 ] && ok "three listings present" || bad "listings missing"
 
 step "6. Set delivery, one by postcode"
-try "delivery by postcode" './monitor.py delivery --dealer "BoatWorld" --kind free --postcode "S41 9PZ"'
+try "delivery by postcode" './monitor.py delivery --dealer "BoatWorld" --kind free --postcode "'"$DEALER_PC"'"'
 try "delivery flat rate"   './monitor.py delivery --dealer "Dulas Boats" --kind flat --amount 95'
 ./monitor.py delivery 2>&1 | grep -q "BoatWorld" && ok "delivery table shows dealers" || bad "delivery table"
 

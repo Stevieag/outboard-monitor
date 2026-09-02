@@ -211,7 +211,7 @@ def nearby_districts(postcode, limit=30):
     import json as _json
     import re as _re
     import scrape as _scrape
-    # the outward code is everything except the final three characters ("M1 1AE" -> "M1")
+    # the outward code is everything except the final three characters
     cleaned = (postcode or "").upper().replace(" ", "")
     outcode = cleaned[:-3] if len(cleaned) > 3 else cleaned
     if not _re.match(r"^[A-Z]{1,2}\d{1,2}[A-Z]?$", outcode):

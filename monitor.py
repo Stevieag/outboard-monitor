@@ -708,7 +708,7 @@ def cmd_find_dealers(conn, args):
         print("   %-15s %s" % (name, url))
     print("\nSearch each by postcode %s. When you find one, add its listings and" % postcode.upper())
     print("record how far it is so collection is costed properly:\n")
-    print('   ./monitor.py delivery --dealer "Their Name" --kind free --postcode WN7 2LH')
+    print('   ./monitor.py delivery --dealer "Their Name" --kind free --postcode "THEIR POSTCODE"')
 
 
 def cmd_setup(conn, args):

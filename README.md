@@ -125,7 +125,7 @@ and lists nearby council areas to search by name. Record a dealer's distance by
 postcode and collection gets costed properly:
 
 ```bash
-./monitor.py delivery --dealer "SSI Marine" --kind free --postcode "WN7 2LH"
+./monitor.py delivery --dealer "SSI Marine" --kind free --postcode "DEALER POSTCODE"
 ```
 
 Distances are straight-line × 1.25 to approximate road miles.
@@ -137,7 +137,7 @@ Set what each dealer charges to deliver, and how far away they are, on the dashb
 delivered, or driving to collect.
 
 ```bash
-./monitor.py settings postcode "M1 1AE"
+./monitor.py settings postcode "YOUR POSTCODE"
 ./monitor.py settings max_travel_miles 150     # how far you will drive
 ./monitor.py settings travel_per_mile 0.25     # running cost per mile, round trip
 ./monitor.py settings free_collect "Local Marine,Other Dealer"
