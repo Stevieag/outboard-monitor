@@ -760,8 +760,9 @@ def _background_check(ids=None):
 
 # The scraper throttles per HOST, so crawling different dealers at the same
 # time is no less polite than one at a time - and turns an hour into minutes.
-# Kept modest so a home connection is not saturated.
-POPULATE_WORKERS = 4
+# Ten covers nearly every seed dealer at once; each still waits four seconds
+# between its own requests, so no single site sees a faster rate than before.
+POPULATE_WORKERS = 10
 
 
 def _background_populate(max_pages=60):
