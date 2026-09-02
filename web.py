@@ -609,7 +609,14 @@ def settings_page(conn, flash=None) -> bytes:
         rows = []
         for key, label, kind, help_text in items:
             value = core.get_setting(conn, key, "") or ""
-            if kind.startswith("choice:"):
+            if kind == "bool":
+                # value stays "1"/"0" in the database; only the label reads yes/no
+                field = ('<select name="%s">%s</select>'
+                         % (key, "".join('<option value="%s"%s>%s</option>'
+                                         % (v, " selected" if core.bool_label(value) == lab
+                                            else "", lab)
+                                         for v, lab in (("1", "yes"), ("0", "no")))))
+            elif kind.startswith("choice:"):
                 choices = kind.split(":", 1)[1].split("|")
                 field = ('<select name="%s">%s</select>'
                          % (key, "".join('<option value="%s"%s>%s</option>'
@@ -829,7 +836,12 @@ class Handler(BaseHTTPRequestHandler):
                     if key not in form:
                         continue
                     raw = (form.get(key) or [""])[0].strip()
-                    if kind == "number" and raw:
+                    if kind == "bool":
+                        parsed = core.parse_bool(raw)
+                        if parsed is None:
+                            continue      # accepts yes/no/on/off/1/0, ignores junk
+                        raw = parsed
+                    elif kind == "number" and raw:
                         raw = raw.replace(",", "").replace("£", "").strip()
                         try:
                             float(raw)

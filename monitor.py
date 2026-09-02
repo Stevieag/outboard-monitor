@@ -671,7 +671,7 @@ def cmd_serve(conn, args):
 
 DEALER_LOCATORS = [
     ("Tohatsu UK",   "https://tohatsu.co.uk/dealers"),
-    ("Suzuki Marine","https://marine.suzuki.co.uk/dealer-locator/"),
+    ("Suzuki Marine","https://marine.suzuki.co.uk/find-a-dealer/"),
     ("Yamaha Marine","https://www.yamaha-motor.eu/gb/en/dealer-locator/"),
     ("Mercury",      "https://www.mercurymarine.com/en/gb/dealer-locator/"),
     ("Honda Marine", "https://www.honda.co.uk/marine/dealer-search.html"),
@@ -711,6 +711,13 @@ def cmd_find_dealers(conn, args):
     print('   ./monitor.py delivery --dealer "Their Name" --kind free --postcode "THEIR POSTCODE"')
 
 
+def _wrap_help(text, width=74, indent="   "):
+    """Wrap a setting's help so long explanations stay readable in a terminal."""
+    import textwrap
+    lines = textwrap.wrap(text, width=width)
+    return ("\n" + indent).join(lines)
+
+
 def cmd_setup(conn, args):
     """Walk through the settings once, on a fresh install."""
     print("Outboard Price Monitor - first-time setup")
@@ -722,18 +729,28 @@ def cmd_setup(conn, args):
             cmd_setup._last_group = group
         current = core.get_setting(conn, key, "") or ""
         hint = ""
-        if kind.startswith("choice:"):
+        shown = current or "off"
+        if kind == "bool":
+            hint = " [yes/no]"
+            shown = core.bool_label(current) if current else "yes"
+        elif kind.startswith("choice:"):
             hint = " [%s]" % "/".join(c or "blank" for c in kind.split(":", 1)[1].split("|"))
         if help_text:
-            print("   %s" % help_text)
+            print("\n   %s" % _wrap_help(help_text))
         try:
-            answer = input("   %s%s [%s]: " % (label, hint, current or "off")).strip()
+            answer = input("   %s%s [%s]: " % (label, hint, shown)).strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\nStopped. Nothing further changed.")
             return
         if answer == "":
             continue
-        if kind == "number":
+        if kind == "bool":
+            parsed = core.parse_bool(answer)
+            if parsed is None:
+                print("   (answer yes or no - skipped)")
+                continue
+            answer = parsed
+        elif kind == "number":
             cleaned = answer.replace(",", "").replace("£", "").strip()
             try:
                 float(cleaned)

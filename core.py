@@ -107,47 +107,94 @@ DEFAULT_SETTINGS = {
 SETTINGS_SPEC = [
     ("What you are shopping for", [
         ("budget", "Budget", "number",
-         "Alert when a matching motor's DELIVERED price falls to or below this."),
-        ("min_hp", "Minimum HP", "number", "Ignore anything smaller. Blank for no limit."),
-        ("max_hp", "Maximum HP", "number", "Ignore anything larger. Blank for no limit."),
+         "The most you want to pay, ALL IN - price plus delivery, or plus the fuel "
+         "to go and collect. Motors at or under it are flagged, and you are alerted "
+         "the moment one falls into range. e.g. 1100"),
+        ("min_hp", "Minimum HP", "number",
+         "Smaller motors are hidden. Set both this and the maximum to the same "
+         "number to track one size only. Blank for no limit. e.g. 6"),
+        ("max_hp", "Maximum HP", "number",
+         "Larger motors are hidden. Blank for no limit. e.g. 6"),
         ("shaft", "Shaft length", "choice:|S|L|XL|UL",
-         "S short, L long, XL extra-long, UL ultra-long. Blank accepts any. "
-         "Listings that do not state a shaft are always kept."),
+         "Match your boat's transom: S short (15in, most tenders and small "
+         "dinghies), L long (20in), XL extra-long (25in), UL ultra-long. Blank "
+         "accepts any. Listings that do not state a shaft are always kept, since "
+         "most dealers leave it off."),
     ]),
     ("Where you are", [
         ("delivery_city", "Your town or city", "text",
-         "Used in column headings, e.g. 'Delivered to Manchester'."),
+         "A label only - it heads the price column, e.g. 'Delivered to Walkden'. "
+         "Nothing is calculated from it."),
         ("postcode", "Your postcode", "text",
-         "Used when asking a dealer's own cart what delivery costs."),
+         "This one does real work: it sets how far every dealer is from you, so "
+         "collection can be costed and dealers beyond your driving limit are "
+         "marked delivery-only. Looked up via postcodes.io (free, no key, UK "
+         "only). e.g. M28 7JF"),
     ]),
     ("Collecting in person", [
         ("max_travel_miles", "Furthest you will drive", "number",
-         "One-way miles. Dealers further away are treated as delivery-only."),
+         "ONE-WAY miles. Dealers further than this are never costed as collection, "
+         "only delivery. e.g. 50"),
         ("travel_per_mile", "Running cost per mile", "number",
-         "Applied to the ROUND trip, so 0.25 on a 40 mile dealer costs £20."),
+         "Your fuel and wear per mile, charged on the ROUND trip - so 0.15 on a "
+         "dealer 40 miles away costs 80 x 0.15 = 12 pounds to collect. e.g. 0.15"),
         ("free_collect", "Dealers you would collect from anyway", "text",
-         "Comma-separated. These cost nothing to collect from - no detour."),
+         "Comma-separated dealer names you pass anyway, so collecting costs you "
+         "nothing extra - no detour. e.g. SSI Marine, Dulas Boats"),
     ]),
     ("Cost of ownership", [
         ("service_year1", "Dealer service, first year", "number",
-         "Many warranties require dealer servicing for the whole term."),
-        ("service_year_n", "Dealer service, each later year", "number", ""),
+         "Most warranties are void without dealer servicing, so this is a real "
+         "cost of owning it. Added to the lifetime total. Blank to ignore."),
+        ("service_year_n", "Dealer service, each later year", "number",
+         "Charged for every year after the first, for as long as you keep it."),
         ("own_years", "How long you will keep it", "number",
-         "Servicing is only counted for as long as you own it and have cover."),
+         "How many years of servicing to count into the total cost. e.g. 10"),
     ]),
     ("Alerts", [
-        ("drop_alert_pct", "Notify on drops of at least", "number", "Percent."),
-        ("notify_macos", "Desktop notifications", "choice:1|0", "1 on, 0 off."),
+        ("drop_alert_pct", "Notify on drops of at least", "number",
+         "Percent. A 1 here means a 1000 pound motor must fall by 10 pounds "
+         "before you hear about it - it keeps pennies of rounding quiet. e.g. 1"),
+        ("notify_macos", "Desktop notifications", "bool",
+         "Pop up a macOS notification on a price drop or a motor coming into "
+         "budget. Ignored on Linux."),
     ]),
     ("Scraping", [
         ("min_plausible", "Ignore prices below", "number",
-         "Keeps accessories and finance-per-month figures out."),
+         "A floor, so propellers, spares and 'from 39 pounds a month' finance "
+         "figures are not mistaken for the motor. e.g. 400"),
         ("max_plausible", "Ignore prices above", "number",
-         "Keeps phone numbers and part codes out."),
-        ("respect_robots", "Honour robots.txt", "choice:1|0",
-         "Leave on unless you have a reason not to."),
+         "A ceiling, so phone numbers and part codes on the page are not read as "
+         "prices. e.g. 150000"),
+        ("respect_robots", "Honour robots.txt", "bool",
+         "Skip pages a dealer's robots.txt asks automated tools not to fetch. "
+         "Leave this on: most of these are small businesses on modest hosting, "
+         "and it is their stated wish."),
     ]),
 ]
+
+
+TRUE_WORDS = ("1", "y", "yes", "on", "true", "t")
+FALSE_WORDS = ("0", "n", "no", "off", "false", "f")
+
+
+def parse_bool(answer):
+    """'yes'/'y'/'on'/'1' -> '1', 'no'/'n'/'off'/'0' -> '0', anything else None.
+
+    Settings are stored as "1"/"0" so everything reading them keeps working;
+    only how we ASK changes.
+    """
+    text = (answer or "").strip().lower()
+    if text in TRUE_WORDS:
+        return "1"
+    if text in FALSE_WORDS:
+        return "0"
+    return None
+
+
+def bool_label(value):
+    """How a stored '1'/'0' should read back to a person."""
+    return "yes" if str(value).strip() in TRUE_WORDS else "no"
 
 
 def settings_spec_flat():
