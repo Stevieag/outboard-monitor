@@ -994,13 +994,30 @@ def _search_for_dealers(conn, args, towns, district):
     places = (towns[:args.places] or [district])[:args.places]
     print("Searching for dealers near you, in: %s\n" % ", ".join(places))
     seen = {}
+    blocked = None
     for place in places:
         for phrase in ("outboard dealer %s", "outboard motors for sale %s"):
-            for site in core.web_search(phrase % place, limit=8):
+            try:
+                results = core.web_search(phrase % place, limit=8)
+            except core.SearchUnavailable as exc:
+                blocked = str(exc)
+                break
+            for site in results:
                 host = _urlparse(site).netloc.replace("www.", "").lower()
                 if host in known or host in seen:
                     continue
                 seen[host] = site
+        if blocked:
+            break
+    if blocked and not seen:
+        print("Could not search: %s.\n" % blocked)
+        print("This is the search engine's limit, not yours, and it passes. The")
+        print("terms above are the same ones - run them in a browser meanwhile,")
+        print("and crawl anything promising:\n")
+        print('   ./monitor.py crawl "https://their-site.co.uk" --dry-run')
+        return
+    if blocked:
+        print("(the search engine stopped answering part way: %s)\n" % blocked)
     if not seen:
         print("The search returned nothing new - every result was a dealer you")
         print("already track, or was filtered out as a directory or marketplace.")

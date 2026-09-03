@@ -499,6 +499,10 @@ NOT_A_DEALER = (
 )
 
 
+class SearchUnavailable(Exception):
+    """The search engine would not answer - blocked, throttled or unreachable."""
+
+
 def web_search(query, limit=10):
     """Result URLs for a query, using DuckDuckGo's lite endpoint.
 
@@ -513,7 +517,16 @@ def web_search(query, limit=10):
     try:
         body = _scrape.fetch(url, respect_robots=True)
     except Exception:
-        return []
+        raise SearchUnavailable("the search engine could not be reached")
+    # It answers 200 with a polite "anomaly" page rather than an error code, so
+    # an empty result would otherwise look like "no dealers near you" when it
+    # really means "stop asking for a while".
+    low = body.lower()
+    if "uddg=" not in body and any(word in low for word in
+                                   ("anomaly", "unusual traffic", "captcha",
+                                    "too many requests", "rate limit")):
+        raise SearchUnavailable("the search engine is rate-limiting automated "
+                                "queries - try again in a few minutes")
     out = []
     for raw in _re.findall(r"uddg=([^&\"']+)", body):
         link = _parse.unquote(raw)
