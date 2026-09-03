@@ -105,6 +105,7 @@ DEFAULT_SETTINGS = {
     "own_years": "5",          # how long you plan to keep it
     "travel_per_mile": "0.25", # running cost per mile, applied to the ROUND trip
     "road_factor": "1.25",     # straight-line -> road, only if routing is down
+    "assume_delivery": "50",   # stand-in delivery for dealers who only quote
     "max_travel_miles": "150", # how far you will drive to collect
     "free_collect": "",        # comma-separated dealers you would collect from anyway
 }
@@ -150,6 +151,14 @@ SETTINGS_SPEC = [
          "Only used if the routing service cannot be reached. Distances are "
          "normally a real driving route. On real UK journeys the old 1.25 came "
          "out 6-12% short, so 1.35 is a safer guess when falling back."),
+        ("assume_delivery", "Assume delivery costs", "number",
+         "Most dealers will not publish a rate for something as bulky as an "
+         "outboard, so half your listings can show no delivered price at all "
+         "and drop out of the ranking. A figure here stands in for those, "
+         "clearly marked 'assumed', so they can at least be compared. 50 is a "
+         "realistic floor for palletised freight on a small motor - raise it "
+         "for a big one. Blank shows nothing at all, which is stricter but "
+         "hides half your listings."),
         ("free_collect", "Dealers you would collect from anyway", "text",
          "Comma-separated dealer names you pass anyway, so collecting costs you "
          "nothing extra - no detour. e.g. SSI Marine, Dulas Boats"),
@@ -839,9 +848,21 @@ def landed(conn, dealer, price):
     options = [(c, l) for c, l in ((deliver, deliver_label), (drive, drive_label))
                if c is not None]
     if not options:
+        # Outboards are freight, so most dealers quote at checkout rather than
+        # publish a rate - half of a typical database ends up with no landed
+        # price and cannot be ranked at all. Rather than leave those invisible,
+        # an assumption can stand in, always labelled as one.
+        assumed = get_float_setting(conn, "assume_delivery", 0) or 0
+        if assumed > 0:
+            return price + assumed, assumed, "assumed %s" % _money_ish(assumed)
         return None, None, deliver_label
     cost, label = min(options, key=lambda o: o[0])
     return price + cost, cost, label
+
+
+def _money_ish(value):
+    """A bare pounds figure for a label, without importing the CLI formatter."""
+    return ("£%.0f" % value) if float(value) == int(value) else ("£%.2f" % value)
 
 
 # Manufacturer model codes, most specific pattern first.

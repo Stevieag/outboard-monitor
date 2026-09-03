@@ -35,8 +35,9 @@ step "1. Fresh clone - what does a new user see?"
 step "2. Guided setup (answering the prompts)"
 # One answer per prompt, in the order core.settings_spec_flat() yields them:
 # budget min_hp max_hp shaft city postcode travel per_mile road_factor collect
-# svc1 svcN years drop notify min_plaus max_plaus workers interval robots
-printf '1500\n5\n8\nS\nManchester\n%s\n60\n0.30\n1.35\n\n90\n180\n5\n2\n1\n400\n150000\n4\n4\n1\n' "$PC" | ./monitor.py setup 2>&1 | tail -3
+# assume_delivery svc1 svcN years drop notify min_plaus max_plaus
+# workers interval robots
+printf '1500\n5\n8\nS\nManchester\n%s\n60\n0.30\n1.35\n75\n\n90\n180\n5\n2\n1\n400\n150000\n4\n4\n1\n' "$PC" | ./monitor.py setup 2>&1 | tail -3
 [ "$(./monitor.py settings | grep -c '150000')" -ge 1 ] && ok "answers line up with prompts" || bad "setup answers misaligned"
 [ "$(./monitor.py settings | grep -c "$PC")" -ge 1 ] && ok "postcode saved" || bad "postcode not saved"
 [ "$(./monitor.py settings | grep -c '1500')" -ge 1 ] && ok "budget saved" || bad "budget not saved"

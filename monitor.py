@@ -792,13 +792,26 @@ def cmd_delivery_scan(conn, args):
             unclear += 1
         elif terms.get("free_over") is not None:
             suggested += 1
-            print('     suggests:  ./monitor.py delivery --dealer "%s" '
-                  '--kind threshold --amount %s --free-over %g'
-                  % (dealer, terms.get("flat") or 0, terms["free_over"]))
+            if args.apply:
+                core.set_delivery(conn, dealer, "threshold",
+                                  amount=terms.get("flat") or 0,
+                                  free_over=terms["free_over"],
+                                  note="read from %s" % url, source="policy-scan")
+                print("     APPLIED: free over £%g, else £%s"
+                      % (terms["free_over"], terms.get("flat") or 0))
+            else:
+                print('     suggests:  ./monitor.py delivery --dealer "%s" '
+                      '--kind threshold --amount %s --free-over %g'
+                      % (dealer, terms.get("flat") or 0, terms["free_over"]))
         elif terms.get("flat") is not None:
             suggested += 1
-            print('     suggests:  ./monitor.py delivery --dealer "%s" '
-                  '--kind flat --amount %g' % (dealer, terms["flat"]))
+            if args.apply:
+                core.set_delivery(conn, dealer, "flat", amount=terms["flat"],
+                                  note="read from %s" % url, source="policy-scan")
+                print("     APPLIED: flat £%g" % terms["flat"])
+            else:
+                print('     suggests:  ./monitor.py delivery --dealer "%s" '
+                      '--kind flat --amount %g' % (dealer, terms["flat"]))
         else:
             unclear += 1
             print("     nothing quotable found - the page gives no figure")
@@ -1311,6 +1324,9 @@ def build_parser():
     scan = subs.add_parser("delivery-scan",
                            help="read dealers' delivery pages and suggest their terms")
     scan.add_argument("--dealer", help="just this one, instead of all of them")
+    scan.add_argument("--apply", action="store_true",
+                      help="set the terms where a page states them plainly and "
+                           "says nothing about excluding bulky goods")
     scan.add_argument("--save-notes", action="store_true",
                       help="record what each page said in the dealer's note")
     scan.set_defaults(func=cmd_delivery_scan)
