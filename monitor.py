@@ -438,6 +438,7 @@ def cmd_export(conn, args):
 
 def cmd_delivery(conn, args):
     """View or set per-dealer delivery terms used for landed-cost comparison."""
+    core.set_road_factor(core.get_setting(conn, "road_factor", core.ROAD_FACTOR))
     if args.dealer and args.kind:
         core.set_delivery(conn, args.dealer, args.kind, amount=args.amount,
                           free_over=args.free_over, note=args.note, source="manual")
@@ -447,20 +448,54 @@ def cmd_delivery(conn, args):
             if not home:
                 print("  (no postcode of your own set, so distance not calculated)")
             else:
-                miles = core.distance_miles(home, args.postcode)
+                miles, how = core.distance_miles_how(home, args.postcode)
                 if miles is None:
                     print("  could not geocode %s - set miles by hand on the "
                           "Delivery tab" % args.postcode)
                 else:
-                    conn.execute("UPDATE delivery SET miles = ? WHERE dealer = ?",
-                                 (miles, args.dealer))
+                    # keep the dealer's postcode, so the distance can be redone
+                    # if you ever move or correct your own
+                    conn.execute("UPDATE delivery SET miles = ?, postcode = ? "
+                                 "WHERE dealer = ?",
+                                 (miles, args.postcode.upper(), args.dealer))
                     conn.commit()
                     cost, label = core.travel_cost(conn, args.dealer)
-                    print("  %s is %.0f road miles away%s"
+                    print("  %s is %.0f road miles away (%s)%s"
                           % (args.postcode.upper(), miles,
+                             "real route" if how == "route" else "estimated",
                              (" - about %s to collect" % money(cost, "GBP"))
                              if cost else ""))
         return
+    if getattr(args, "recompute", False):
+        home = core.get_setting(conn, "postcode", "")
+        if not home:
+            print("No postcode of your own set. Run:")
+            print('   ./monitor.py settings postcode "YOUR POSTCODE"')
+            return
+        rows = [r for r in core.all_delivery(conn) if r["postcode"]]
+        if not rows:
+            print("No dealer postcodes on record yet, so there is nothing to "
+                  "recompute. They are saved from now on whenever you run:")
+            print('   ./monitor.py delivery --dealer "NAME" --kind free '
+                  '--postcode "THEIRS"')
+            return
+        print("Redoing %d distance(s) from %s\n" % (len(rows), home.upper()))
+        for row in rows:
+            miles, how = core.distance_miles_how(home, row["postcode"])
+            if miles is None:
+                print("   %-26s could not route" % row["dealer"][:26])
+                continue
+            was = row["miles"]
+            conn.execute("UPDATE delivery SET miles = ? WHERE dealer = ?",
+                         (miles, row["dealer"]))
+            change = ("" if was is None
+                      else "  (was %.1f, %+.1f)" % (was, miles - was))
+            print("   %-26s %6.1f mi  %-9s%s"
+                  % (row["dealer"][:26], miles,
+                     "real route" if how == "route" else "estimated", change))
+        conn.commit()
+        return
+
     rows = core.all_delivery(conn)
     dealers = sorted({r["dealer"] for r in core.listings(conn) if r["dealer"]})
     known = {r["dealer"]: r for r in rows}
@@ -1110,6 +1145,8 @@ def build_parser():
     deliv.add_argument("--note")
     deliv.add_argument("--postcode",
                        help="the dealer's postcode; sets real road distance from yours")
+    deliv.add_argument("--recompute", action="store_true",
+                       help="redo every stored distance from your postcode")
     deliv.set_defaults(func=cmd_delivery)
 
     cr = subs.add_parser("crawl", help="walk a dealer site and add its outboards")

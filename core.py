@@ -99,6 +99,7 @@ DEFAULT_SETTINGS = {
     "service_year_n": "",      # dealer service cost, each year after
     "own_years": "5",          # how long you plan to keep it
     "travel_per_mile": "0.25", # running cost per mile, applied to the ROUND trip
+    "road_factor": "1.25",     # straight-line -> road, only if routing is down
     "max_travel_miles": "150", # how far you will drive to collect
     "free_collect": "",        # comma-separated dealers you would collect from anyway
 }
@@ -140,6 +141,10 @@ SETTINGS_SPEC = [
         ("travel_per_mile", "Running cost per mile", "number",
          "Your fuel and wear per mile, charged on the ROUND trip - so 0.15 on a "
          "dealer 40 miles away costs 80 x 0.15 = 12 pounds to collect. e.g. 0.15"),
+        ("road_factor", "Straight-line to road multiplier", "number",
+         "Only used if the routing service cannot be reached. Distances are "
+         "normally a real driving route. On real UK journeys the old 1.25 came "
+         "out 6-12% short, so 1.35 is a safer guess when falling back."),
         ("free_collect", "Dealers you would collect from anyway", "text",
          "Comma-separated dealer names you pass anyway, so collecting costs you "
          "nothing extra - no detour. e.g. SSI Marine, Dulas Boats"),
@@ -223,7 +228,60 @@ def is_configured(conn) -> bool:
 
 
 # Straight-line distance under-reads what you actually drive; roads wander.
-ROAD_FACTOR = 1.25
+ROAD_FACTOR = 1.25          # straight-line -> road miles, when routing is unavailable
+_road_factor = [ROAD_FACTOR]
+
+# Public OSRM instances. No key, no signup. Both are TLS 1.3 only, which the
+# macOS system Python (LibreSSL 2.8.3) cannot negotiate, so the fetch falls
+# back to curl - present on macOS and virtually every Linux.
+ROUTING_HOSTS = (
+    "https://routing.openstreetmap.de/routed-car",
+    "https://router.project-osrm.org",
+)
+
+
+def set_road_factor(value):
+    """Override the straight-line multiplier used when routing is unavailable."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return
+    if 1.0 <= number <= 3.0:
+        _road_factor[0] = number
+
+
+def route_miles(lat1, lon1, lat2, lon2):
+    """Real driving miles between two points, or None if no router answers.
+
+    Asks a public OSRM instance for an actual road route rather than guessing
+    from the straight line. Tries urllib first and falls back to curl, because
+    the routers require TLS 1.3 and some system Pythons cannot speak it.
+    """
+    import json as _json
+    import subprocess as _subprocess
+    import urllib.request as _request
+    for host in ROUTING_HOSTS:
+        url = ("%s/route/v1/driving/%f,%f;%f,%f?overview=false"
+               % (host, lon1, lat1, lon2, lat2))
+        raw = None
+        try:
+            raw = _request.urlopen(_request.Request(
+                url, headers={"User-Agent": "outboard-monitor"}), timeout=20).read()
+        except Exception:
+            try:
+                done = _subprocess.run(
+                    ["curl", "-sS", "--max-time", "20", "-A", "outboard-monitor", url],
+                    capture_output=True, timeout=25)
+                raw = done.stdout
+            except Exception:
+                continue
+        try:
+            routes = _json.loads(raw).get("routes") or []
+            if routes:
+                return round(routes[0]["distance"] / 1609.344, 1)
+        except Exception:
+            continue
+    return None
 
 
 def geocode(postcode):
@@ -249,20 +307,42 @@ def geocode(postcode):
             result.get("admin_district") or result.get("region") or "")
 
 
-def distance_miles(from_postcode, to_postcode):
-    """Approximate ROAD miles between two UK postcodes, or None."""
+def distance_miles(from_postcode, to_postcode, allow_network=True):
+    """ROAD miles between two UK postcodes, or None.
+
+    Asks a routing service for the real driving route. Only if no router
+    answers does it fall back to the straight line times a fudge factor, which
+    on real routes runs 6-12% short. Returns the miles; distance_miles_how
+    says which method produced them.
+    """
     import math
     a = geocode(from_postcode)
     b = geocode(to_postcode)
     if not a or not b:
         return None
     (lat1, lon1, _), (lat2, lon2, _) = a, b
+    if allow_network:
+        real = route_miles(lat1, lon1, lat2, lon2)
+        if real is not None:
+            return real
     radius, rad = 3958.8, math.pi / 180
     h = (math.sin((lat2 - lat1) * rad / 2) ** 2
          + math.cos(lat1 * rad) * math.cos(lat2 * rad)
          * math.sin((lon2 - lon1) * rad / 2) ** 2)
     straight = 2 * radius * math.asin(math.sqrt(h))
-    return round(straight * ROAD_FACTOR, 1)
+    return round(straight * _road_factor[0], 1)
+
+
+def distance_miles_how(from_postcode, to_postcode):
+    """(miles, "route"|"estimate") - the distance and how it was arrived at."""
+    a = geocode(from_postcode)
+    b = geocode(to_postcode)
+    if not a or not b:
+        return None, "unknown"
+    real = route_miles(a[0], a[1], b[0], b[1])
+    if real is not None:
+        return real, "route"
+    return distance_miles(from_postcode, to_postcode, allow_network=False), "estimate"
 
 
 def nearby_districts(postcode, limit=30):
@@ -319,6 +399,7 @@ def connect(path: str = None) -> sqlite3.Connection:
 MIGRATIONS = [
     ("listings", "model_code", "TEXT"),
     ("delivery", "miles", "REAL"),
+    ("delivery", "postcode", "TEXT"),
     ("reviews", "warranty", "TEXT"),
     ("reviews", "corrosion", "TEXT"),
     ("reviews", "warranty_years", "INTEGER"),
