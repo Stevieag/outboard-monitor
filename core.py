@@ -512,6 +512,13 @@ class SearchUnavailable(Exception):
     """The search engine would not answer - blocked, throttled or unreachable."""
 
 
+# A search engine tolerates far less than a shop does. Six queries four seconds
+# apart is enough to earn an IP-level cooldown that outlasts the session, so
+# searches get their own much slower pace, independent of page fetching.
+SEARCH_INTERVAL = 20.0
+_last_search = [0.0]
+
+
 def web_search(query, limit=10):
     """Result URLs for a query, using DuckDuckGo's lite endpoint.
 
@@ -522,6 +529,11 @@ def web_search(query, limit=10):
     import re as _re
     import urllib.parse as _parse
     import scrape as _scrape
+    import time as _time
+    waited = _time.time() - _last_search[0]
+    if _last_search[0] and waited < SEARCH_INTERVAL:
+        _time.sleep(SEARCH_INTERVAL - waited)
+    _last_search[0] = _time.time()
     url = "https://lite.duckduckgo.com/lite/?" + _parse.urlencode({"q": query})
     try:
         body = _scrape.fetch(url, respect_robots=True)
@@ -534,8 +546,9 @@ def web_search(query, limit=10):
     if "uddg=" not in body and any(word in low for word in
                                    ("anomaly", "unusual traffic", "captcha",
                                     "too many requests", "rate limit")):
-        raise SearchUnavailable("the search engine is rate-limiting automated "
-                                "queries - try again in a few minutes")
+        raise SearchUnavailable("the search engine has put this address on a "
+                                "cooldown - it lasts a while, so come back later "
+                                "rather than retrying")
     out = []
     for raw in _re.findall(r"uddg=([^&\"']+)", body):
         link = _parse.unquote(raw)

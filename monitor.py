@@ -1005,11 +1005,19 @@ def _search_for_dealers(conn, args, towns, district):
         known.add(_urlparse(site).netloc.replace("www.", "").lower())
 
     places = (towns[:args.places] or [district])[:args.places]
-    print("Searching for dealers near you, in: %s\n" % ", ".join(places))
+    queries = len(places) * (2 if args.deep else 1)
+    print("Searching for dealers near you, in: %s" % ", ".join(places))
+    print("%d search%s, %gs apart so the engine does not shut us out - about %d "
+          "minute(s).\n" % (queries, "" if queries == 1 else "es",
+                            core.SEARCH_INTERVAL,
+                            max(1, int(queries * core.SEARCH_INTERVAL / 60) + 1)))
     seen = {}
     blocked = None
     for place in places:
-        for phrase in ("outboard dealer %s", "outboard motors for sale %s"):
+        phrases = ["outboard dealer %s"]
+        if args.deep:
+            phrases.append("outboard motors for sale %s")
+        for phrase in phrases:
             try:
                 results = core.web_search(phrase % place, limit=8)
             except core.SearchUnavailable as exc:
@@ -1383,6 +1391,8 @@ def build_parser():
     findd.add_argument("--postcode", help="defaults to your saved postcode")
     findd.add_argument("--search", action="store_true",
                        help="actually run the searches and check what they turn up")
+    findd.add_argument("--deep", action="store_true",
+                       help="a second search phrase per area - twice the queries")
     findd.add_argument("--places", type=int, default=3,
                        help="how many nearby areas to search (default 3)")
     findd.set_defaults(func=cmd_find_dealers)
