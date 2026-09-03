@@ -369,6 +369,118 @@ def nearby_districts(postcode, limit=30):
     return seen
 
 
+# Where dealers usually put their delivery terms. Shopify's first two are
+# standard, so they cover most of the trade.
+DELIVERY_PAGE_PATHS = (
+    "/policies/shipping-policy", "/pages/delivery", "/pages/delivery-payment",
+    "/pages/delivery-information", "/pages/shipping", "/delivery",
+    "/delivery-information", "/shipping", "/shipping-policy", "/pages/faq",
+)
+
+# Almost every "free over £X" offer excludes exactly what we are buying, so
+# these words mean the headline figure must not be believed for an outboard.
+DELIVERY_EXCLUSION = _re_excl = (
+    "bulky", "oversize", "over-size", "heavy", "large item", "large/heavy",
+    "outboard", "engine", "excluded", "exclusion", "does not include",
+    "does not apply", "surcharge", "pallet", "kerbside", "quotation",
+)
+
+
+def _readable(html):
+    """The body text of a policy page, without nav, script or style noise."""
+    import re as _re
+    for pattern in (r'<div[^>]*class="[^"]*shopify-policy__body[^"]*".*?</div>\s*</div>',
+                    r'<div[^>]*class="[^"]*rte[^"]*"[^>]*>(.*?)</div>',
+                    r'<main[^>]*>(.*?)</main>'):
+        found = _re.search(pattern, html, _re.S | _re.I)
+        if found and len(found.group(0)) > 200:
+            chunk = found.group(0)
+            chunk = _re.sub(r"<script.*?</script>|<style.*?</style>", " ", chunk,
+                            flags=_re.S | _re.I)
+            chunk = _re.sub(r"<[^>]+>", " ", chunk)
+            chunk = _re.sub(r"&nbsp;?", " ", chunk)
+            return _re.sub(r"\s+", " ", chunk).strip()
+    return ""
+
+
+def fetch_delivery_policy(site):
+    """(text, url) of a dealer's delivery page, or (None, None).
+
+    Follows one "read our policy here" hop, because some shops put a link on
+    the policy page rather than the policy itself.
+    """
+    import re as _re
+    import scrape as _scrape
+    from urllib.parse import urljoin as _urljoin
+    site = site.rstrip("/")
+    for path in DELIVERY_PAGE_PATHS:
+        url = site + path
+        try:
+            html = _scrape.fetch(url, respect_robots=True)
+        except Exception:
+            continue
+        text = _readable(html)
+        if not text:
+            continue
+        # a stub that only points somewhere else - follow it once
+        if len(text) < 300:
+            link = _re.search(r'https?://[^\s"\'<>]*(?:deliver|shipping|postage)[^\s"\'<>]*',
+                              html, _re.I)
+            if link:
+                try:
+                    deeper = _readable(_scrape.fetch(link.group(0), respect_robots=True))
+                    if deeper and len(deeper) > len(text):
+                        return deeper, link.group(0)
+                except Exception:
+                    pass
+        if len(text) > 300:
+            return text, url
+    return None, None
+
+
+def read_delivery_terms(text):
+    """What a delivery page says, as {free_over, flat, excludes, evidence}.
+
+    `excludes` being true means the page says bulky, heavy or oversized goods
+    are treated differently - which an outboard always is. The figures are then
+    almost certainly not the ones you would be charged, so they are offered as
+    something to check rather than something to apply.
+    """
+    import re as _re
+    if not text:
+        return {}
+    found = {"free_over": None, "flat": None, "excludes": False, "evidence": []}
+    over = _re.search(r"free[^.]{0,60}?(?:over|above)\s*£\s?([\d,]+)", text, _re.I)
+    if over:
+        try:
+            found["free_over"] = float(over.group(1).replace(",", ""))
+            found["evidence"].append(over.group(0).strip()[:140])
+        except ValueError:
+            pass
+    flat = _re.search(r"(?:deliver\w*|shipping|postage|carriage)[^.£]{0,40}"
+                      r"(?:from|costs?|is|:)?\s*£\s?([\d,]+(?:\.\d\d)?)", text, _re.I)
+    if flat:
+        try:
+            found["flat"] = float(flat.group(1).replace(",", ""))
+            found["evidence"].append(flat.group(0).strip()[:140])
+        except ValueError:
+            pass
+    # the "free over £150" sentence often matches the flat pattern too
+    if found["flat"] is not None and found["flat"] == found["free_over"]:
+        found["flat"] = None
+        found["evidence"] = [e for e in found["evidence"]
+                             if not e.lower().startswith("delivery we offer")]
+    low = text.lower()
+    for word in DELIVERY_EXCLUSION:
+        if word in low:
+            found["excludes"] = True
+            spot = _re.search(r"[^.]{0,110}%s[^.]{0,110}\." % _re.escape(word), text, _re.I)
+            if spot:
+                found["evidence"].append("EXCLUSION: " + spot.group(0).strip()[:150])
+            break
+    return found
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 

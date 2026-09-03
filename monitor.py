@@ -738,6 +738,75 @@ def cmd_backfill_hp(conn, args):
               "those by hand:\n   ./monitor.py edit ID --hp N" % left)
 
 
+def cmd_delivery_scan(conn, args):
+    """Read each dealer's delivery page and suggest what they charge.
+
+    Suggests rather than sets. Almost every "free over GBP X" offer excludes
+    heavy or bulky goods, and an outboard is both - so a headline figure taken
+    at face value would make a motor look cheaper to land than it really is,
+    which is the one number this whole tool exists to get right.
+    """
+    from urllib.parse import urlparse as _urlparse
+    sites = {}
+    for listing in core.listings(conn):
+        if listing["dealer"] and listing["dealer"] not in sites:
+            parts = _urlparse(listing["url"])
+            sites[listing["dealer"]] = "%s://%s" % (parts.scheme, parts.netloc)
+    if args.dealer:
+        wanted = args.dealer.strip().lower()
+        sites = {d: s for d, s in sites.items() if d.lower() == wanted}
+        if not sites:
+            print("No tracked dealer called %r." % args.dealer)
+            return
+
+    print("Reading delivery pages for %d dealer(s). Suggestions only - nothing "
+          "is changed.\n" % len(sites))
+    suggested = unclear = 0
+    for dealer in sorted(sites):
+        text, url = core.fetch_delivery_policy(sites[dealer])
+        if not text:
+            print("-- %-24s no delivery page found" % dealer[:24])
+            unclear += 1
+            continue
+        terms = core.read_delivery_terms(text)
+        print("-- %s" % dealer)
+        print("   %s" % url)
+        for line in terms.get("evidence", []):
+            print("     %s" % line)
+        if terms.get("excludes"):
+            print("     >> mentions heavy/bulky/excluded goods, so these figures")
+            print("        probably do NOT apply to an outboard. Check before using.")
+            unclear += 1
+        elif terms.get("free_over") is not None:
+            suggested += 1
+            print('     suggests:  ./monitor.py delivery --dealer "%s" '
+                  '--kind threshold --amount %s --free-over %g'
+                  % (dealer, terms.get("flat") or 0, terms["free_over"]))
+        elif terms.get("flat") is not None:
+            suggested += 1
+            print('     suggests:  ./monitor.py delivery --dealer "%s" '
+                  '--kind flat --amount %g' % (dealer, terms["flat"]))
+        else:
+            unclear += 1
+            print("     nothing quotable found - the page gives no figure")
+        if args.save_notes:
+            snippet = " | ".join(terms.get("evidence", []))[:240]
+            if snippet:
+                existing = {r["dealer"]: r for r in core.all_delivery(conn)}
+                row = existing.get(dealer)
+                core.set_delivery(conn, dealer, row["kind"] if row else "quote",
+                                  amount=row["amount"] if row else None,
+                                  free_over=row["free_over"] if row else None,
+                                  note="from %s: %s" % (url, snippet),
+                                  source="policy-scan")
+        print()
+    print("=" * 60)
+    print("%d dealer(s) gave a usable figure, %d need a human." % (suggested, unclear))
+    print("Outboards are bulky goods almost everywhere, so most dealers quote at")
+    print("checkout rather than publish a rate. Where that is so, ask them and set")
+    print('it with:  ./monitor.py delivery --dealer "NAME" --kind flat --amount N')
+
+
 def cmd_compare(conn, args):
     """Price one motor across every dealer, using manufacturer model codes.
 
@@ -1148,6 +1217,13 @@ def build_parser():
     deliv.add_argument("--recompute", action="store_true",
                        help="redo every stored distance from your postcode")
     deliv.set_defaults(func=cmd_delivery)
+
+    scan = subs.add_parser("delivery-scan",
+                           help="read dealers' delivery pages and suggest their terms")
+    scan.add_argument("--dealer", help="just this one, instead of all of them")
+    scan.add_argument("--save-notes", action="store_true",
+                      help="record what each page said in the dealer's note")
+    scan.set_defaults(func=cmd_delivery_scan)
 
     cr = subs.add_parser("crawl", help="walk a dealer site and add its outboards")
     cr.add_argument("url", help="site root, e.g. https://dealer.co.uk")

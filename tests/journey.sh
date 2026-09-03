@@ -68,6 +68,7 @@ try "delivery by postcode" './monitor.py delivery --dealer "BoatWorld" --kind fr
 try "delivery flat rate"   './monitor.py delivery --dealer "Dulas Boats" --kind flat --amount 95'
 ./monitor.py delivery 2>&1 | grep -q "BoatWorld" && ok "delivery table shows dealers" || bad "delivery table"
 try "delivery --recompute" './monitor.py delivery --recompute'
+try "delivery-scan"        './monitor.py delivery-scan --dealer "BoatWorld"'
 
 step "7. Check prices"
 ./monitor.py check 2>&1 | tee $D/j_check.txt | tail -4
