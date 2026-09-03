@@ -242,5 +242,8 @@ It stops there, deliberately. You can add your own files alongside these and
 keep them closed, and you can combine this with proprietary code — MPL only
 reaches the files it already covers, not your whole project.
 
+If you build on this, keep the copyright line and the licence notice at the
+top of the files you took — that is the whole of what is asked in return.
+
 Provided as is, with no warranty. It reads prices off third-party websites that
 change without notice; check anything before you spend money on it.
