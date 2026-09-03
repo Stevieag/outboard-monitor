@@ -486,6 +486,75 @@ def read_delivery_terms(text):
     return found
 
 
+# Sites that turn up in dealer searches but are not dealers: classifieds,
+# directories, marketplaces and social. Anything here is skipped outright.
+NOT_A_DEALER = (
+    "duckduckgo.com", "google.", "bing.com", "facebook.com", "instagram.com",
+    "youtube.com", "twitter.com", "x.com", "pinterest.", "reddit.com",
+    "ebay.", "gumtree.", "amazon.", "etsy.com", "aliexpress.",
+    "yell.com", "yelp.", "tripadvisor.", "wikipedia.org", "linkedin.com",
+    "indeed.com", "checkatrade.com", "thomsonlocal.com", "cylex", "bark.com",
+    "apolloduck.", "boatsandoutboards.", "boatshop24.", "yachtworld.",
+    "boat-info.", "yachtboatdealers.", "mimoji.", "192.com", "scoot.co.uk",
+)
+
+
+def web_search(query, limit=10):
+    """Result URLs for a query, using DuckDuckGo's lite endpoint.
+
+    Chosen because its robots.txt says Allow: / - Mojeek and most others
+    disallow /search - and because it needs no key, in keeping with the rest of
+    this tool. Returns [] rather than raising if the search is unreachable.
+    """
+    import re as _re
+    import urllib.parse as _parse
+    import scrape as _scrape
+    url = "https://lite.duckduckgo.com/lite/?" + _parse.urlencode({"q": query})
+    try:
+        body = _scrape.fetch(url, respect_robots=True)
+    except Exception:
+        return []
+    out = []
+    for raw in _re.findall(r"uddg=([^&\"']+)", body):
+        link = _parse.unquote(raw)
+        if not link.startswith("http"):
+            continue
+        host = _parse.urlparse(link).netloc.lower()
+        if any(bad in host for bad in NOT_A_DEALER):
+            continue
+        root = "%s://%s" % (_parse.urlparse(link).scheme, _parse.urlparse(link).netloc)
+        if root not in out:
+            out.append(root)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def looks_like_dealer(site, sample=3):
+    """(pages, priced) - how much of a site reads as priced outboard listings.
+
+    Search hands back plenty of sites that mention outboards without selling
+    them. Rather than guess from the name, this asks the same crawler the rest
+    of the tool uses: are there product pages, and do they carry a price a
+    motor would plausibly have?
+    """
+    import crawl as _crawl
+    try:
+        urls, _how, _total = _crawl.candidate_urls(site, None)
+    except Exception:
+        return 0, 0
+    if not urls:
+        return 0, 0
+    priced = 0
+    for url in urls[:sample]:
+        try:
+            if _crawl.inspect(url, 400, 150000):
+                priced += 1
+        except Exception:
+            pass
+    return len(urls), priced
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 

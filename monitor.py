@@ -640,10 +640,18 @@ def _crawl_site(conn, site, dealer, pattern=None, max_pages=120, dry_run=False,
         except Exception:
             skipped += 1
             continue
-        if facts["code"]:
-            listing_id = conn.execute("SELECT id FROM listings WHERE url = ?",
-                                      (url,)).fetchone()["id"]
-            core.update_listing(conn, listing_id, model_code=facts["code"])
+        row = conn.execute("SELECT id FROM listings WHERE url = ?", (url,)).fetchone()
+        if row:
+            listing_id = row["id"]
+            if facts["code"]:
+                core.update_listing(conn, listing_id, model_code=facts["code"])
+            # The price was already read off the page a moment ago. Keeping it
+            # means the dashboard has something to show at once, instead of a
+            # row of blanks until someone runs a check.
+            if found.get("price") is not None:
+                core.record_price(conn, listing_id, found["price"],
+                                  found["currency"] or "GBP", "ok",
+                                  "first seen while crawling")
         existing.add(url)
         added += 1
         if not quiet:
@@ -964,9 +972,69 @@ def cmd_find_dealers(conn, args):
     print("AUTHORISED dealers - the ones whose warranty registration is valid:\n")
     for name, url in DEALER_LOCATORS:
         print("   %-15s %s" % (name, url))
+    if getattr(args, "search", False):
+        _search_for_dealers(conn, args, towns, district)
+        return
     print("\nSearch each by postcode %s. When you find one, add its listings and" % postcode.upper())
     print("record how far it is so collection is costed properly:\n")
     print('   ./monitor.py delivery --dealer "Their Name" --kind free --postcode "THEIR POSTCODE"')
+    print("\nOr have it run those searches for you:  ./monitor.py find-dealers --search")
+
+
+def _search_for_dealers(conn, args, towns, district):
+    """Run the local searches, then check which results actually sell outboards."""
+    from urllib.parse import urlparse as _urlparse
+    known = set()
+    for listing in core.listings(conn):
+        if listing["url"]:
+            known.add(_urlparse(listing["url"]).netloc.replace("www.", "").lower())
+    for _name, site, _pattern in SEED_DEALERS:
+        known.add(_urlparse(site).netloc.replace("www.", "").lower())
+
+    places = (towns[:args.places] or [district])[:args.places]
+    print("Searching for dealers near you, in: %s\n" % ", ".join(places))
+    seen = {}
+    for place in places:
+        for phrase in ("outboard dealer %s", "outboard motors for sale %s"):
+            for site in core.web_search(phrase % place, limit=8):
+                host = _urlparse(site).netloc.replace("www.", "").lower()
+                if host in known or host in seen:
+                    continue
+                seen[host] = site
+    if not seen:
+        print("The search returned nothing new - every result was a dealer you")
+        print("already track, or was filtered out as a directory or marketplace.")
+        return
+
+    print("%d site(s) to check. Each is asked whether it actually lists priced\n"
+          "outboards, which takes a moment per site.\n" % len(seen))
+    good, weak = [], []
+    for host, site in sorted(seen.items()):
+        pages, priced = core.looks_like_dealer(site)
+        if pages and priced:
+            good.append((host, site, pages, priced))
+            print("   YES  %-34s %d product pages, %d priced" % (host[:34], pages, priced))
+        elif pages:
+            weak.append((host, site, pages))
+            print("   ?    %-34s %d product pages, none priced yet" % (host[:34], pages))
+        else:
+            print("   no   %-34s nothing that reads as a motor listing" % host[:34])
+
+    print()
+    if good:
+        print("Worth adding. Crawl one to bring its listings in:\n")
+        for host, site, _pages, _priced in good:
+            print('   ./monitor.py crawl "%s" --dealer "%s" --dry-run' % (site, host))
+        print("\nDrop --dry-run once the prices look right. Then record where they")
+        print("are, so collecting is costed:\n")
+        print('   ./monitor.py delivery --dealer "NAME" --kind free --postcode "THEIRS"')
+    if weak:
+        print("\nThese have product pages but no price the crawler could read - often")
+        print("a 'call for price' dealer, or a site that needs a --pattern:\n")
+        for host, site, _pages in weak:
+            print('   ./monitor.py crawl "%s" --dealer "%s" --dry-run' % (site, host))
+    if not good and not weak:
+        print("None of them turned out to sell outboards online.")
 
 
 def _wrap_help(text, width=74, indent="   "):
@@ -1280,6 +1348,10 @@ def build_parser():
     findd = subs.add_parser("find-dealers",
                             help="find dealers near you, including local ones")
     findd.add_argument("--postcode", help="defaults to your saved postcode")
+    findd.add_argument("--search", action="store_true",
+                       help="actually run the searches and check what they turn up")
+    findd.add_argument("--places", type=int, default=3,
+                       help="how many nearby areas to search (default 3)")
     findd.set_defaults(func=cmd_find_dealers)
 
     setup = subs.add_parser("setup", help="guided first-time setup")
