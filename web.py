@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import core
 import monitor
+import scrape
 
 _check_lock = threading.Lock()
 _check_queue = []          # listing ids awaiting a check; None means "all active"
@@ -116,11 +117,25 @@ function poll(){
   }).catch(function(){setTimeout(poll,1500)});
 }
 function populate(){
-  if(!confirm('Fetch listings from every seed dealer?\\n\\nFourteen dealers, ten at '+
-              'a time, at one request every four seconds per site — roughly 5 '+
-              'minutes. It runs in the background, so you can keep using the '+
-              'dashboard, and it is safe to close this tab.')){return false}
-  return run('/api/populate','Populating...');
+  // describe what THIS install will do, from the current settings, rather
+  // than repeating numbers that stop being true the moment they are changed
+  return fetch('/api/status').then(function(r){return r.json()}).then(function(d){
+    var c=(d.populate&&d.populate.config)||{};
+    var msg='Fetch listings from every seed dealer?';
+    if(c.dealers){
+      msg+='\\n\\n'+c.dealers+' dealers, '+c.workers+' at a time, up to '+c.pages+
+           ' pages each, at one request every '+c.interval+'s per site.'+
+           '\\nRoughly '+c.minutes+' minute'+(c.minutes==1?'':'s')+'.';
+    }
+    msg+='\\n\\nIt runs in the background, so you can keep using the dashboard, '+
+         'and it is safe to close this tab.';
+    if(!confirm(msg)){return false}
+    return run('/api/populate','Populating...');
+  }).catch(function(){
+    if(!confirm('Fetch listings from every seed dealer? It runs in the '+
+                'background and takes several minutes.')){return false}
+    return run('/api/populate','Populating...');
+  });
 }
 window.addEventListener('DOMContentLoaded',function(){
   fetch('/api/status').then(function(r){return r.json()}).then(function(d){
@@ -137,7 +152,7 @@ def page(title: str, body: str) -> bytes:
 <a href="/">Dashboard</a><a href="/alerts">Alerts</a><a href="/delivery">Dealers</a>
 <a href="/settings">Settings</a>
 <span style="flex:1"></span><span id="status" class="muted"></span>
-<button class="btn" onclick="return populate()">Populate from dealers</button>
+<button class="btn" type="button" onclick="populate()">Populate from dealers</button>
 <button class="btn" onclick="return run('/api/check')">Check all now</button>
 </header>%s<script>%s</script></body></html>""" % (esc(title), CSS, body, JS)).encode("utf-8")
 
@@ -412,7 +427,7 @@ def dashboard(conn, flash=None, flash_bad=False, under=None, per_model=False,
     # merely has everything filtered out should not be told to go and populate.
     nothing_tracked = not core.listings(conn)
     empty_html = ('<div class="empty">No listings yet.<br><br>'
-                  '<button class="btn" onclick="return populate()">'
+                  '<button class="btn" type="button" onclick="populate()">'
                   'Populate from known dealers</button><br><br>'
                   '<span class="muted">Fetches what a dozen UK dealers currently '
                   'list, so you start with prices instead of an empty table. '
@@ -731,7 +746,7 @@ the alerts, so it is worth setting first.</p>
 fetches current prices from a dozen UK dealers that publish them, so you start with
 something to compare instead of an empty table. It walks their sites at a polite rate,
 so give it a few minutes — you can carry on using the dashboard meanwhile.</p>
-<p><button class="btn" onclick="return populate()">Populate from known dealers</button></p>
+<p><button class="btn" type="button" onclick="populate()">Populate from known dealers</button></p>
 <p class="muted" style="font-size:13px">Prefer to pick your own? Paste a dealer's product
 URL into the form on the dashboard, or from a terminal:</p>
 <pre style="background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto"><code>./monitor.py populate --dry-run          # see what it would add
@@ -805,9 +820,10 @@ def _background_check(ids=None):
 # between its own requests, so no single site sees a faster rate than before.
 # Both numbers are settings; this is only the fallback.
 POPULATE_WORKERS = 10
+POPULATE_MAX_PAGES = 60     # pages inspected per dealer
 
 
-def _background_populate(max_pages=60):
+def _background_populate(max_pages=POPULATE_MAX_PAGES):
     """Walk the seed dealers in parallel threads, so the browser is not hanging.
 
     Populate fetches real dealer sites at a polite rate and takes minutes, far
@@ -940,6 +956,22 @@ class Handler(BaseHTTPRequestHandler):
             elif parts.path == "/api/status":
                 state = dict(_check_state)
                 state["populate"] = dict(_populate_state)
+                # what a populate WOULD do, from the current settings, so the
+                # confirmation describes this install rather than the defaults
+                workers = max(1, min(int(core.get_float_setting(
+                    conn, "populate_workers", POPULATE_WORKERS)), 20))
+                interval = core.get_float_setting(
+                    conn, "min_host_interval", scrape.MIN_HOST_INTERVAL)
+                dealers = len(monitor.SEED_DEALERS)
+                rounds = -(-dealers // workers)      # ceiling division
+                state["populate"]["config"] = {
+                    "dealers": dealers,
+                    "workers": workers,
+                    "interval": interval,
+                    "pages": POPULATE_MAX_PAGES,
+                    "minutes": max(1, int(round(
+                        rounds * POPULATE_MAX_PAGES * interval / 60.0))),
+                }
                 self._send(json.dumps(state).encode(), ctype="application/json")
             elif parts.path == "/favicon.ico":
                 self._send(b"", status=404)

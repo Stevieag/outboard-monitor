@@ -130,6 +130,11 @@ print("   %s  populate button on dashboard" % ("PASS " if ok_btn else "FAIL "));
 s,h=get("/api/status")
 ok_api = '"populate"' in h
 print("   %s  populate progress in /api/status" % ("PASS " if ok_api else "FAIL ")); bad += (not ok_api)
+# the confirmation is built from these, so they must be served
+import json as _json
+cfg = (_json.loads(h).get("populate") or {}).get("config") or {}
+ok_cfg = all(k in cfg for k in ("dealers","workers","interval","pages","minutes"))
+print("   %s  populate config for the prompt" % ("PASS " if ok_cfg else "FAIL ")); bad += (not ok_cfg)
 for path,data in (("/save-settings",{"budget":"1750","min_hp":"5"}),
                   ("/set-delivery",{"dealer":"BoatWorld","kind":"free","miles":"44"}),
                   ("/set-delivery",{"dealer":"BoatWorld","kind":"free","postcode":"S41 9PZ"}),
