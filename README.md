@@ -12,7 +12,7 @@ macOS and Linux.
 
 ![no dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![python](https://img.shields.io/badge/python-3.8%2B-blue)
-![license](https://img.shields.io/badge/license-MIT-blue)
+![license](https://img.shields.io/badge/license-MPL--2.0-blue)
 
 ---
 
@@ -231,4 +231,16 @@ up collection.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+Copyright (c) 2026 Stevieag. Mozilla Public License 2.0 — see [LICENSE](LICENSE).
+
+Use it, run it, and build on it freely, including commercially. The one
+condition is file-level copyleft: **if you change one of these source files and
+give your version to anyone, that file's source has to be published under the
+MPL too.** Improvements to the code come back.
+
+It stops there, deliberately. You can add your own files alongside these and
+keep them closed, and you can combine this with proprietary code — MPL only
+reaches the files it already covers, not your whole project.
+
+Provided as is, with no warranty. It reads prices off third-party websites that
+change without notice; check anything before you spend money on it.
