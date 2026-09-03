@@ -543,6 +543,9 @@ def _crawl_site(conn, site, dealer, pattern=None, max_pages=120, dry_run=False,
     within a dealer rather than only when the whole site is finished.
     """
     import crawl
+    import scrape
+    scrape.set_min_host_interval(
+        core.get_float_setting(conn, "min_host_interval", scrape.MIN_HOST_INTERVAL))
     lo = core.get_float_setting(conn, "min_plausible", 400)
     hi = core.get_float_setting(conn, "max_plausible", 150000)
 

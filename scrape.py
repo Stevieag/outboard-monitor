@@ -35,7 +35,17 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate",
     "Connection": "close",
 }
-MIN_HOST_INTERVAL = 4.0   # seconds between requests to the same host
+MIN_HOST_INTERVAL = 4.0   # seconds between requests to the same host (default)
+_min_host_interval = [MIN_HOST_INTERVAL]   # live value, settable from settings
+
+
+def set_min_host_interval(seconds):
+    """Override the polite rate, from the user's settings. Never below 0.5s."""
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return
+    _min_host_interval[0] = max(0.5, value)
 TIMEOUT = 25
 
 # Some retailers reject urllib on headers/TLS fingerprint alone. curl, with a cookie
@@ -65,7 +75,7 @@ class FetchError(Exception):
 def _throttle(host: str) -> None:
     last = _last_hit.get(host)
     if last is not None:
-        wait = MIN_HOST_INTERVAL - (time.time() - last)
+        wait = _min_host_interval[0] - (time.time() - last)
         if wait > 0:
             time.sleep(wait)
     _last_hit[host] = time.time()

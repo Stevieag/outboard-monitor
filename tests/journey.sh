@@ -96,6 +96,10 @@ step "10. Scheduling"
 ./monitor.py schedule --at 09:00 --print-only 2>&1 | grep -q StartCalendarInterval && ok "daily plist generated" || bad "plist"
 ./monitor.py schedule --hours 6 --print-only 2>&1 | grep -q StartInterval && ok "interval plist generated" || bad "plist interval"
 
+step "10b. Dashboard JavaScript actually parses"
+./tests/check_js.py >/dev/null 2>&1 && ok "dashboard JS has no broken strings" \
+  || bad "dashboard JS would not run in a browser"
+
 step "11. Web dashboard - every page over HTTP"
 ./monitor.py serve --port 8899 --no-open > $D/j_web.log 2>&1 &
 WEBPID=$!

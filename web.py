@@ -111,8 +111,8 @@ function poll(){
   }).catch(function(){setTimeout(poll,1500)});
 }
 function populate(){
-  if(!confirm('Fetch listings from every seed dealer?\n\nFourteen dealers, four at '+
-              'a time, at one request every four seconds per site — roughly 15 '+
+  if(!confirm('Fetch listings from every seed dealer?\\n\\nFourteen dealers, ten at '+
+              'a time, at one request every four seconds per site — roughly 5 '+
               'minutes. It runs in the background, so you can keep using the '+
               'dashboard, and it is safe to close this tab.')){return false}
   return run('/api/populate','Populating...');
@@ -760,8 +760,9 @@ def _background_check(ids=None):
 
 # The scraper throttles per HOST, so crawling different dealers at the same
 # time is no less polite than one at a time - and turns an hour into minutes.
-# Ten covers nearly every seed dealer at once; each still waits four seconds
+# Ten covers nearly every seed dealer at once; each still waits its interval
 # between its own requests, so no single site sees a faster rate than before.
+# Both numbers are settings; this is only the fallback.
 POPULATE_WORKERS = 10
 
 
@@ -773,6 +774,13 @@ def _background_populate(max_pages=60):
     way a price sweep is. Each worker gets its own SQLite connection; WAL mode
     lets them write concurrently.
     """
+    conn0 = core.init_db()
+    try:
+        workers = int(core.get_float_setting(conn0, "populate_workers",
+                                             POPULATE_WORKERS))
+    finally:
+        conn0.close()
+    workers = max(1, min(workers, 20))
     seeds = list(monitor.SEED_DEALERS)
     pending = list(seeds)
     pending_lock = threading.Lock()
@@ -819,7 +827,7 @@ def _background_populate(max_pages=60):
 
     def supervise():
         threads = [threading.Thread(target=worker, daemon=True)
-                   for _ in range(min(POPULATE_WORKERS, len(seeds)))]
+                   for _ in range(min(workers, len(seeds)))]
         for t in threads:
             t.start()
         while any(t.is_alive() for t in threads):

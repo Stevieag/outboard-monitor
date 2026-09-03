@@ -86,6 +86,8 @@ DEFAULT_SETTINGS = {
     "min_plausible": "400",      # ignore "prices" below this (accessories, shipping)
     "max_plausible": "150000",   # ignore absurd numbers (phone numbers, part codes)
     "respect_robots": "1",
+    "populate_workers": "10",  # dealers crawled at once by the dashboard button
+    "min_host_interval": "4",  # seconds between requests to the SAME dealer
     "notify_macos": "1",
     "postcode": "",            # your postcode, for delivery quotes
     "delivery_city": "you",    # shown in column headings
@@ -166,6 +168,16 @@ SETTINGS_SPEC = [
         ("max_plausible", "Ignore prices above", "number",
          "A ceiling, so phone numbers and part codes on the page are not read as "
          "prices. e.g. 150000"),
+        ("populate_workers", "Dealers to crawl at once", "number",
+         "How many different dealers Populate works through in parallel. Each "
+         "site is still fetched at the rate below, so this costs no single "
+         "dealer anything - it only shortens the wall-clock. 10 is about five "
+         "minutes for the full list; 1 is nearly an hour."),
+        ("min_host_interval", "Seconds between requests to one dealer", "number",
+         "The politeness rate. Four seconds is gentle on the small businesses "
+         "this fetches from. Lowering it makes you a heavier guest on their "
+         "server without making the whole run much quicker, since dealers are "
+         "already fetched in parallel."),
         ("respect_robots", "Honour robots.txt", "bool",
          "Skip pages a dealer's robots.txt asks automated tools not to fetch. "
          "Leave this on: most of these are small businesses on modest hosting, "
