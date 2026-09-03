@@ -8,7 +8,8 @@ cheaper, delivery or driving there to collect — so a cheap motor with £300 of
 doesn't beat a dearer one you can pick up.
 
 **Pure Python 3 standard library.** No pip install, no Node, no build step. Runs on
-macOS and Linux.
+macOS and Linux. The optional AI commands are the one exception - they need
+`pip3 install anthropic` and an API key, and everything else works without them.
 
 ![no dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![python](https://img.shields.io/badge/python-3.8%2B-blue)
@@ -228,6 +229,30 @@ leaves your own `prices.db` alone.
 It earned its keep immediately: it caught that columns added to a developer's database
 by hand were missing from the schema, so a fresh clone crashed on any page that costed
 up collection.
+
+## Optional: AI assistance
+
+Some questions scraping cannot answer. Chief among them is what a dealer
+actually charges to deliver an engine — none of them publish it, because an
+outboard is bulky freight quoted at checkout. A model with web search can read
+the forum posts and the quotes buyers report, and come back with a figure.
+
+```bash
+pip3 install anthropic
+./monitor.py settings ai_api_key "sk-ant-..."       # console.anthropic.com
+
+./monitor.py ai-delivery --dealer "Seamark Nunn"    # what will they charge?
+./monitor.py ai-delivery --apply                    # save the confident ones
+./monitor.py ai-review "Tohatsu MFS6"               # how is it regarded?
+./monitor.py ai-dealers                             # who else is near me?
+```
+
+Entirely optional, and off unless you set a key. Calls cost a few pence and
+happen only when you run an `ai-` command — never during a price check. The key
+lives in `prices.db`, which is gitignored, and is masked wherever it is shown.
+
+`ai-delivery` will not save a low-confidence answer, and every figure it does
+save is noted as coming from the AI, so you can tell a guess from a quote.
 
 ## Licence
 

@@ -37,7 +37,7 @@ step "2. Guided setup (answering the prompts)"
 # budget min_hp max_hp shaft city postcode travel per_mile road_factor collect
 # assume_delivery svc1 svcN years drop notify min_plaus max_plaus
 # workers interval robots
-printf '1500\n5\n8\nS\nManchester\n%s\n60\n0.30\n1.35\n75\n\n90\n180\n5\n2\n1\n400\n150000\n4\n4\n1\n' "$PC" | ./monitor.py setup 2>&1 | tail -3
+printf '1500\n5\n8\nS\nManchester\n%s\n60\n0.30\n1.35\n75\n\n90\n180\n5\n2\n1\n\n\n400\n150000\n4\n4\n1\n' "$PC" | ./monitor.py setup 2>&1 | tail -3
 [ "$(./monitor.py settings | grep -c '150000')" -ge 1 ] && ok "answers line up with prompts" || bad "setup answers misaligned"
 [ "$(./monitor.py settings | grep -c "$PC")" -ge 1 ] && ok "postcode saved" || bad "postcode not saved"
 [ "$(./monitor.py settings | grep -c '1500')" -ge 1 ] && ok "budget saved" || bad "budget not saved"
@@ -93,6 +93,11 @@ try "export"              './monitor.py export --out '"$D"'/j_export.csv'
 step "8b. Backfill horsepower from titles"
 try "backfill-hp --dry-run" './monitor.py backfill-hp --dry-run'
 try "backfill-hp"          './monitor.py backfill-hp'
+
+step "8c. AI commands degrade politely with no key"
+./monitor.py ai-delivery 2>&1 | grep -q "optional" && ok "ai-delivery explains what is missing" || bad "ai-delivery"
+./monitor.py ai-dealers 2>&1 | grep -q "optional" && ok "ai-dealers explains what is missing" || bad "ai-dealers"
+./monitor.py settings 2>&1 | grep -q "ai_api_key" && ok "ai settings listed" || bad "ai settings missing"
 
 step "9. Edit and remove"
 try "edit target"  './monitor.py edit 1 --target 1000'

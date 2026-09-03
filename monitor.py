@@ -833,6 +833,146 @@ def cmd_delivery_scan(conn, args):
     print('it with:  ./monitor.py delivery --dealer "NAME" --kind flat --amount N')
 
 
+AI_SYSTEM = (
+    "You help someone in the UK buy a small outboard motor. Be concrete and "
+    "brief. Prices in pounds. When you are not sure, say so plainly rather "
+    "than guessing - a wrong delivery cost makes a motor look like a better "
+    "deal than it is, which is worse than no answer. Cite what you found."
+)
+
+
+def _ai_guard(conn):
+    """Print why AI is unavailable and return False, or return True."""
+    import ai
+    problem = ai.why_unavailable(conn)
+    if problem:
+        print("AI features need a little setup: %s\n" % problem)
+        print("They are optional - everything else works without them.")
+        return False
+    return True
+
+
+def cmd_ai_delivery(conn, args):
+    """Ask the model what a dealer actually charges to deliver an outboard."""
+    import ai
+    if not _ai_guard(conn):
+        return
+    from urllib.parse import urlparse as _urlparse
+    sites = {}
+    for listing in core.listings(conn):
+        if listing["dealer"] and listing["dealer"] not in sites:
+            parts = _urlparse(listing["url"])
+            sites[listing["dealer"]] = "%s://%s" % (parts.scheme, parts.netloc)
+    if args.dealer:
+        sites = {d: s for d, s in sites.items() if d.lower() == args.dealer.strip().lower()}
+        if not sites:
+            print("No tracked dealer called %r." % args.dealer)
+            return
+    home = core.get_setting(conn, "postcode", "")
+    for dealer in sorted(sites):
+        print("-- %s  (%s)" % (dealer, sites[dealer]))
+        prompt = (
+            "What does %s (%s) charge to deliver a small outboard motor "
+            "(4-6hp, about 25-30kg) to a UK mainland address%s?\n\n"
+            "Outboards are usually excluded from a shop's normal free-delivery "
+            "threshold because they are bulky freight, so check whether their "
+            "headline offer applies to engines at all. Search their site, and "
+            "forums or reviews where buyers mention what they were charged.\n\n"
+            "Reply with a JSON object and nothing else:\n"
+            '{"kind": "free|flat|threshold|collect|quote", "amount": number or null, '
+            '"free_over": number or null, "confidence": "high|medium|low", '
+            '"reason": "one sentence, citing what you found"}'
+            % (dealer, sites[dealer],
+               " near %s" % home.upper() if home else "")
+        )
+        try:
+            text, sources = ai.ask(conn, prompt, AI_SYSTEM)
+        except ai.AiUnavailable as exc:
+            print("   %s\n" % exc)
+            return
+        found = ai.as_json(text)
+        if not found:
+            print("   no clear answer:\n   %s\n" % (text or "").strip()[:300])
+            continue
+        print("   %s%s  (confidence: %s)"
+              % (found.get("kind"),
+                 "" if found.get("amount") in (None, "") else " £%s" % found["amount"],
+                 found.get("confidence")))
+        print("   %s" % (found.get("reason") or "")[:200])
+        for source in sources[:3]:
+            print("     %s" % source[:100])
+        if args.apply and found.get("confidence") in ("high", "medium"):
+            core.set_delivery(conn, dealer, found.get("kind") or "quote",
+                              amount=found.get("amount"),
+                              free_over=found.get("free_over"),
+                              note="AI (%s): %s" % (found.get("confidence"),
+                                                    (found.get("reason") or "")[:150]),
+                              source="ai")
+            print("   APPLIED")
+        elif args.apply:
+            print("   not applied - low confidence")
+        print()
+    if not args.apply:
+        print("Nothing was changed. Add --apply to save the ones it is confident about.")
+
+
+def cmd_ai_review(conn, args):
+    """Ask the model how a motor or a dealer is regarded."""
+    import ai
+    if not _ai_guard(conn):
+        return
+    subject = " ".join(args.subject)
+    prompt = (
+        "How is %s regarded by people who own or have bought one in the UK?\n\n"
+        "Cover: reliability and any common faults, how it compares with the "
+        "obvious alternatives at the same horsepower, parts and servicing "
+        "availability, and what owners complain about. If it is a dealer "
+        "rather than a motor, cover their service, delivery and after-sales "
+        "reputation instead.\n\nAbout 200 words. Say clearly if opinion is "
+        "thin or mixed." % subject
+    )
+    try:
+        text, sources = ai.ask(conn, prompt, AI_SYSTEM, max_tokens=4000)
+    except ai.AiUnavailable as exc:
+        print(exc)
+        return
+    print(text.strip())
+    if sources:
+        print("\nSources:")
+        for source in sources[:6]:
+            print("   %s" % source[:110])
+
+
+def cmd_ai_dealers(conn, args):
+    """Ask the model which dealers near you sell outboards."""
+    import ai
+    if not _ai_guard(conn):
+        return
+    home = core.get_setting(conn, "postcode", "")
+    if not home:
+        print('Set your postcode first:  ./monitor.py settings postcode "YOUR POSTCODE"')
+        return
+    have = sorted({r["dealer"] for r in core.listings(conn) if r["dealer"]})
+    prompt = (
+        "Which UK dealers sell new outboard motors online with prices on the "
+        "page, and which ones are within driving distance of %s?\n\n"
+        "I already track these, so skip them: %s.\n\n"
+        "Prefer authorised dealers for Honda, Suzuki, Tohatsu, Yamaha or "
+        "Mercury. For each, give the name, the website, roughly where they "
+        "are, and whether their site lists prices or only invites enquiries.\n\n"
+        "Reply as a plain list, one dealer per line, no more than 10."
+        % (home.upper(), ", ".join(have) or "none")
+    )
+    try:
+        text, sources = ai.ask(conn, prompt, AI_SYSTEM, max_tokens=4000)
+    except ai.AiUnavailable as exc:
+        print(exc)
+        return
+    print(text.strip())
+    print("\nTo start tracking one:")
+    print('   ./monitor.py crawl "https://their-site.co.uk" --dealer "Name" --dry-run')
+
+
 def cmd_compare(conn, args):
     """Price one motor across every dealer, using manufacturer model codes.
 
@@ -1032,9 +1172,23 @@ def _search_for_dealers(conn, args, towns, district):
             break
     if blocked and not seen:
         print("Could not search: %s.\n" % blocked)
-        print("This is the search engine's limit, not yours, and it passes. The")
-        print("terms above are the same ones - run them in a browser meanwhile,")
-        print("and crawl anything promising:\n")
+        # There is no second free engine to fall back to - Mojeek, Startpage,
+        # Ecosia and Brave all disallow it in robots.txt, and the public
+        # SearXNG instances sit behind a browser check. The AI's own search is
+        # the one permitted alternative, for anyone who has set it up.
+        import ai
+        if ai.available(conn):
+            print("Falling back to the AI's own web search instead.\n")
+            cmd_ai_dealers(conn, args)
+            return
+        print("There is no free search engine to fall back to: the others all")
+        print("disallow automated queries in robots.txt. Either wait, or set up")
+        print("the AI, whose search is permitted:\n")
+        print("   pip3 install anthropic")
+        print('   ./monitor.py settings ai_api_key "sk-ant-..."')
+        print("   ./monitor.py ai-dealers\n")
+        print("Meanwhile the terms above work in a browser, and anything")
+        print("promising can be brought in with:\n")
         print('   ./monitor.py crawl "https://their-site.co.uk" --dry-run')
         return
     if blocked:
@@ -1094,7 +1248,9 @@ def cmd_setup(conn, args):
         current = core.get_setting(conn, key, "") or ""
         hint = ""
         shown = current or "off"
-        if kind == "bool":
+        if kind == "secret":
+            shown = core.mask_secret(current) or "off"
+        elif kind == "bool":
             hint = " [yes/no]"
             shown = core.bool_label(current) if current else "yes"
         elif kind.startswith("choice:"):
@@ -1142,14 +1298,19 @@ def cmd_setup(conn, args):
 def cmd_settings(conn, args):
     if args.key and args.value is not None:
         core.set_setting(conn, args.key, args.value)
-        print("%s = %s" % (args.key, args.value))
+        secret = any(k == args.key and kd == "secret"
+                     for _g, k, _l, kd, _h in core.settings_spec_flat())
+        print("%s = %s" % (args.key,
+                           core.mask_secret(args.value) if secret else args.value))
         return
     last_group = None
-    for group, key, label, _kind, _help in core.settings_spec_flat():
+    for group, key, label, kind, _help in core.settings_spec_flat():
         if group != last_group:
             print("\n%s" % group)
             last_group = group
         value = core.get_setting(conn, key, "") or ""
+        if kind == "secret":
+            value = core.mask_secret(value)
         print("  %-18s %-28s %s" % (key, value or "(off)", label))
     extra = [k for k in sorted(core.DEFAULT_SETTINGS)
              if k not in {key for _g, key, _l, _k, _h in core.settings_spec_flat()}]
@@ -1338,6 +1499,20 @@ def build_parser():
     scan.add_argument("--save-notes", action="store_true",
                       help="record what each page said in the dealer's note")
     scan.set_defaults(func=cmd_delivery_scan)
+
+    aid = subs.add_parser("ai-delivery",
+                          help="ask the AI what a dealer charges to deliver")
+    aid.add_argument("--dealer", help="just this one")
+    aid.add_argument("--apply", action="store_true",
+                     help="save the terms it is confident about")
+    aid.set_defaults(func=cmd_ai_delivery)
+
+    air = subs.add_parser("ai-review", help="ask the AI about a motor or a dealer")
+    air.add_argument("subject", nargs="+", help='e.g. "Tohatsu MFS6" or "BoatWorld"')
+    air.set_defaults(func=cmd_ai_review)
+
+    aidd = subs.add_parser("ai-dealers", help="ask the AI which dealers are near you")
+    aidd.set_defaults(func=cmd_ai_dealers)
 
     cr = subs.add_parser("crawl", help="walk a dealer site and add its outboards")
     cr.add_argument("url", help="site root, e.g. https://dealer.co.uk")

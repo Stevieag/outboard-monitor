@@ -106,6 +106,8 @@ DEFAULT_SETTINGS = {
     "travel_per_mile": "0.25", # running cost per mile, applied to the ROUND trip
     "road_factor": "1.25",     # straight-line -> road, only if routing is down
     "assume_delivery": "50",   # stand-in delivery for dealers who only quote
+    "ai_api_key": "",          # optional: unlocks the ai-* commands
+    "ai_model": "claude-opus-5",
     "max_travel_miles": "150", # how far you will drive to collect
     "free_collect": "",        # comma-separated dealers you would collect from anyway
 }
@@ -180,6 +182,17 @@ SETTINGS_SPEC = [
          "Pop up a macOS notification on a price drop or a motor coming into "
          "budget. Ignored on Linux."),
     ]),
+    ("AI assistance (optional)", [
+        ("ai_api_key", "Anthropic API key", "secret",
+         "Optional. Unlocks the ai-* commands, which can answer what scraping "
+         "cannot - chiefly what a dealer really charges to deliver an engine, "
+         "since none of them publish it. Get one at console.anthropic.com. It "
+         "is stored in prices.db, which is never committed. Needs one package: "
+         "pip3 install anthropic"),
+        ("ai_model", "Model to use", "text",
+         "Leave as claude-opus-5 unless you have a reason. Calls cost a few "
+         "pence each and only happen when you run an ai- command."),
+    ]),
     ("Scraping", [
         ("min_plausible", "Ignore prices below", "number",
          "A floor, so propellers, spares and 'from 39 pounds a month' finance "
@@ -226,6 +239,16 @@ def parse_bool(answer):
 def bool_label(value):
     """How a stored '1'/'0' should read back to a person."""
     return "yes" if str(value).strip() in TRUE_WORDS else "no"
+
+
+def mask_secret(value):
+    """Show enough of a key to recognise it, not enough to use it."""
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 12:
+        return "*" * len(text)
+    return "%s...%s" % (text[:7], text[-4:])
 
 
 def settings_spec_flat():

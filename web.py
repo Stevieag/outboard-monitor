@@ -695,7 +695,13 @@ def settings_page(conn, flash=None) -> bytes:
         rows = []
         for key, label, kind, help_text in items:
             value = core.get_setting(conn, key, "") or ""
-            if kind == "bool":
+            if kind == "secret":
+                # never render the key itself into the page; an empty box that
+                # keeps what is stored unless you type something new
+                field = ('<input name="%s" type="password" value="" '
+                         'placeholder="%s" autocomplete="off">'
+                         % (key, esc(core.mask_secret(value) or "not set")))
+            elif kind == "bool":
                 # value stays "1"/"0" in the database; only the label reads yes/no
                 field = ('<select name="%s">%s</select>'
                          % (key, "".join('<option value="%s"%s>%s</option>'
@@ -1039,6 +1045,8 @@ class Handler(BaseHTTPRequestHandler):
                     if key not in form:
                         continue
                     raw = (form.get(key) or [""])[0].strip()
+                    if kind == "secret" and not raw:
+                        continue          # blank means "leave the stored key alone"
                     if kind == "bool":
                         parsed = core.parse_bool(raw)
                         if parsed is None:
