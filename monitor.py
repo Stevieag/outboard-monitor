@@ -542,6 +542,12 @@ SEED_DEALERS = [
     ("Nestaway Boats",          "https://nestawayboats.com", None),
     ("Whitstable Marine",       "https://www.whitstablemarine.co.uk", None),
     ("Bill Higham Marine",      "https://www.billhigham.co.uk", None),
+    # A big spares catalogue as well as engines - 3,000 pages of which 2,100
+    # mention "outboard" because they are thermostats and impellers FOR one.
+    # Engines lead with a model code, so match that rather than the word.
+    ("SSI Marine",              "https://ssimarine.co.uk",
+     r"(?i)/products/(?:tohatsu-|suzuki-|honda-|yamaha-|mercury-|mariner-)?"
+     r"(mfs|df|bf|ft)\d{1,3}(-\d)?[^/]*(hp|stroke|outboard)"),
     # Honda's own store: start in the marine section, take only /p/ product
     # pages naming a BF motor, and skip the Honwave boat-plus-engine packages
     # whose page price is for the whole rig, not the outboard.
