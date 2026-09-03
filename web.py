@@ -129,7 +129,7 @@ def page(title: str, body: str) -> bytes:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%s</title><style>%s</style></head><body>
 <header><h1>⚓ Outboard Price Monitor</h1>
-<a href="/">Dashboard</a><a href="/alerts">Alerts</a><a href="/delivery">Delivery</a>
+<a href="/">Dashboard</a><a href="/alerts">Alerts</a><a href="/delivery">Dealers</a>
 <a href="/settings">Settings</a>
 <span style="flex:1"></span><span id="status" class="muted"></span>
 <button class="btn" onclick="return populate()">Populate from dealers</button>
@@ -576,10 +576,18 @@ onsubmit="return confirm('Delete this listing and its price history?')">
 
 
 def delivery_page(conn, flash=None) -> bytes:
+    """Every dealer you track: where they are, how far, and what it costs to get there."""
     dealers = sorted({r["dealer"] for r in core.listings(conn) if r["dealer"]})
     known = {r["dealer"]: r for r in core.all_delivery(conn)}
     postcode = core.get_setting(conn, "postcode")
     city = core.get_setting(conn, "delivery_city")
+    per_mile = core.get_float_setting(conn, "travel_per_mile", 0)
+    max_miles = core.get_float_setting(conn, "max_travel_miles", 0)
+    counts = {}
+    for listing in core.listings(conn):
+        if listing["dealer"]:
+            counts[listing["dealer"]] = counts.get(listing["dealer"], 0) + 1
+
     rows = []
     for dealer in dealers:
         row = known.get(dealer)
@@ -587,36 +595,61 @@ def delivery_page(conn, flash=None) -> bytes:
         amount = row["amount"] if row and row["amount"] is not None else ""
         free_over = row["free_over"] if row and row["free_over"] is not None else ""
         note = (row["note"] or "") if row else ""
-        count = sum(1 for r in core.listings(conn) if r["dealer"] == dealer)
+        their_postcode = (row["postcode"] or "") if row else ""
+        miles = row["miles"] if row and row["miles"] is not None else ""
         opts = "".join('<option value="%s"%s>%s</option>'
                        % (k, " selected" if k == kind else "", k)
                        for k in ("flat", "free", "threshold", "collect", "quote"))
-        miles = row["miles"] if row and row["miles"] is not None else ""
+
+        # distance and what the round trip costs, as their own columns
+        if miles == "":
+            distance_html = '<span class="muted">—</span>'
+        else:
+            too_far = max_miles and float(miles) > max_miles
+            distance_html = ('%s mi%s' % (esc(miles),
+                             '<br><span class="muted" style="font-size:11px">'
+                             'past your %g mile limit</span>' % max_miles if too_far else ""))
         drive, drive_label = core.travel_cost(conn, dealer)
-        drive_html = ('<span class="muted" style="font-size:12px">%s%s</span>'
-                      % (("collect £%d · " % drive) if drive is not None else "",
-                         esc(drive_label)))
+        if drive is None:
+            travel_html = '<span class="muted">—</span>'
+        else:
+            travel_html = ('<b>%s</b><br><span class="muted" style="font-size:11px">%s</span>'
+                           % (esc(monitor.money(drive, "GBP")), esc(drive_label)))
+
         rows.append(
-            '<tr><td><b>%s</b><br><span class="muted" style="font-size:12px">%d listings</span></td>'
+            '<tr>'
+            '<td><b>%s</b><br><span class="muted" style="font-size:12px">%d listings</span></td>'
             '<td><form method="post" action="/set-delivery" style="display:flex;gap:6px;'
             'align-items:center;flex-wrap:wrap">'
             '<input type="hidden" name="dealer" value="%s">'
+            '<input name="postcode" value="%s" placeholder="their postcode" '
+            'style="width:120px" title="Their postcode. Saving works out the real '
+            'driving distance from yours.">'
             '<select name="kind" style="width:auto">%s</select>'
-            '<input name="amount" value="%s" placeholder="cost" style="width:90px">'
-            '<input name="free_over" value="%s" placeholder="free over" style="width:100px">'
-            '<input name="miles" value="%s" placeholder="miles" style="width:80px">'
-            '<button class="btn ghost" type="submit">Save</button><br>%s</form></td>'
+            '<input name="amount" value="%s" placeholder="cost" style="width:80px">'
+            '<input name="free_over" value="%s" placeholder="free over" style="width:95px">'
+            '<input name="miles" value="%s" placeholder="miles" style="width:70px" '
+            'title="Filled in from the postcode; override it here if you prefer.">'
+            '<button class="btn ghost" type="submit">Save</button></form></td>'
+            '<td class="num">%s</td>'
+            '<td class="num">%s</td>'
             '<td class="muted" style="font-size:12px">%s</td></tr>'
-            % (esc(dealer), count, esc(dealer), opts, esc(amount), esc(free_over),
-               esc(miles), drive_html, esc(note)))
+            % (esc(dealer), counts.get(dealer, 0), esc(dealer), esc(their_postcode),
+               opts, esc(amount), esc(free_over), esc(miles),
+               distance_html, travel_html, esc(note)))
+
+    located = sum(1 for d in dealers if known.get(d) and known[d]["postcode"])
     flash_html = '<div class="flash">%s</div>' % esc(flash) if flash else ""
     body = """<div class="wrap">%s
-<h2 style="margin:0 0 4px;font-size:20px">Delivery to %s</h2>
-<div class="muted" style="margin-bottom:18px">Landed cost = listed price + delivery.
-Where a dealer's own cart quoted a rate for %s it is filled in below; the rest need a
-quote from the dealer, and their listings show no landed price until you set one.</div>
-<div class="card"><h2>Per-dealer delivery</h2><table><thead><tr><th>Dealer</th>
-<th>Terms — kind, cost, free-over, miles from you</th><th>Source</th></tr></thead><tbody>%s</tbody></table></div>
+<h2 style="margin:0 0 4px;font-size:20px">Dealers</h2>
+<div class="muted" style="margin-bottom:18px">%d dealer(s), %d with a postcode on record.
+Landed cost = listed price + whichever is cheaper, delivery or driving there and back.
+Put in a dealer's postcode and the real driving distance from %s is worked out for you.</div>
+<div class="card"><h2>Every dealer you track</h2>
+<div style="overflow-x:auto"><table><thead><tr>
+<th>Dealer</th><th>Where they are, and their terms</th>
+<th class="num">Distance</th><th class="num">To collect</th><th>Source</th>
+</tr></thead><tbody>%s</tbody></table></div></div>
 <div class="card"><h2>What the options mean</h2>
 <div style="padding:14px 16px" class="muted">
 <b>flat</b> — same fee on every order (put it in "cost").<br>
@@ -624,13 +657,16 @@ quote from the dealer, and their listings show no landed price until you set one
 <b>threshold</b> — "cost" applies below the "free over" order value, free at or above it.<br>
 <b>collect</b> — collection only, or delivery arranged separately; no landed price shown.<br>
 <b>quote</b> — not known yet; no landed price shown.<br><br>
-<b>miles</b> — road distance from you. Collecting is costed at %s a mile for the round
-trip, and anything beyond %s miles is treated as too far. Each listing then uses
-whichever is cheaper, delivery or driving.</div></div></div>""" % (
-        flash_html, esc(city), esc(postcode), "".join(rows),
-        esc(monitor.money(core.get_float_setting(conn, "travel_per_mile", 0), "GBP")),
-        esc(core.get_setting(conn, "max_travel_miles")))
-    return page("Delivery", body)
+<b>their postcode</b> — saving one asks a routing service for the real driving route,
+rather than guessing from the straight line, which runs 6-12%% short. It is remembered,
+so if you move or correct your own postcode you can redo every distance at once with
+<code>./monitor.py delivery --recompute</code>.<br><br>
+<b>To collect</b> — %s a mile for the ROUND trip. Anything past %s miles is treated as
+too far to drive, and those listings are costed as delivery only.</div></div></div>""" % (
+        flash_html, len(dealers), located, esc(postcode or "your postcode"),
+        "".join(rows),
+        esc(monitor.money(per_mile, "GBP")), esc(core.get_setting(conn, "max_travel_miles")))
+    return page("Dealers", body)
 
 
 def settings_page(conn, flash=None) -> bytes:
@@ -894,7 +930,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parts.path == "/alerts":
                 core.mark_alerts_seen(conn)
                 self._send(alerts_page(conn))
-            elif parts.path == "/delivery":
+            elif parts.path in ("/delivery", "/dealers"):
                 self._send(delivery_page(conn, flash=(query.get("msg") or [None])[0]))
             elif parts.path == "/api/status":
                 state = dict(_check_state)
@@ -993,12 +1029,31 @@ class Handler(BaseHTTPRequestHandler):
                     core.set_delivery(conn, dealer, kind, amount=num("amount"),
                                       free_over=num("free_over"),
                                       note="set by hand", source="manual")
+                    postcode = (field("postcode") or "").strip().upper()
                     miles = num("miles")
+                    note = ""
+                    if postcode:
+                        # a postcode is the better answer: route it for real and
+                        # let that win over whatever was typed in the miles box
+                        home = core.get_setting(conn, "postcode", "")
+                        if home:
+                            routed, how = core.distance_miles_how(home, postcode)
+                            if routed is not None:
+                                miles = routed
+                                note = "+-+%s+by+%s" % (
+                                    ("%.0f+miles" % routed),
+                                    "road+route" if how == "route" else "estimate")
+                            else:
+                                note = "+-+could+not+locate+that+postcode"
+                        else:
+                            note = "+-+set+your+own+postcode+first"
+                        conn.execute("UPDATE delivery SET postcode = ? WHERE dealer = ?",
+                                     (postcode, dealer))
                     if miles is not None:
                         conn.execute("UPDATE delivery SET miles = ? WHERE dealer = ?",
                                      (miles, dealer))
-                        conn.commit()
-                self._redirect("/delivery?msg=Saved+" + dealer.replace(" ", "+")[:40])
+                    conn.commit()
+                self._redirect("/delivery?msg=Saved+" + dealer.replace(" ", "+")[:40] + note)
             elif parts.path == "/delete":
                 core.delete_listing(conn, int(field("id", "0")))
                 self._redirect("/?msg=Listing+deleted")

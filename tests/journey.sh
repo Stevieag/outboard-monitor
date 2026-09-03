@@ -117,7 +117,7 @@ def get(p):
         with urllib.request.urlopen(B+p, timeout=30) as r: return r.status, r.read().decode()
     except urllib.error.HTTPError as e: return e.code, e.read().decode()
     except Exception as e: return 0, str(e)
-for p in ("/","/?under=2000","/?under=2000&per_model=1","/?all=1","/delivery","/settings","/alerts","/listing?id=1","/api/status"):
+for p in ("/","/?under=2000","/?under=2000&per_model=1","/?all=1","/delivery","/dealers","/settings","/alerts","/listing?id=1","/api/status"):
     s,h=get(p)
     print("   %s  GET %-30s %s" % ("PASS " if s==200 else "FAIL ", p, s))
     bad += (s!=200)
@@ -131,6 +131,7 @@ ok_api = '"populate"' in h
 print("   %s  populate progress in /api/status" % ("PASS " if ok_api else "FAIL ")); bad += (not ok_api)
 for path,data in (("/save-settings",{"budget":"1750","min_hp":"5"}),
                   ("/set-delivery",{"dealer":"BoatWorld","kind":"free","miles":"44"}),
+                  ("/set-delivery",{"dealer":"BoatWorld","kind":"free","postcode":"S41 9PZ"}),
                   ("/add",{"label":"Web added Yamaha","url":"https://dulasboats.co.uk/products/yamaha-6hp","brand":"Yamaha","hp":"6","currency":"GBP"})):
     req=urllib.request.Request(B+path, data=urllib.parse.urlencode(data).encode())
     try:
